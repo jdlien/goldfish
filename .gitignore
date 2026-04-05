@@ -1,0 +1,12 @@
+node_modules/
+dist/
+data/
+logs/
+.env
+*.db
+*.sqlite
+.DS_Store
+coverage/
+.taskmaster/
+schedule.yaml
+.schedule-locks/

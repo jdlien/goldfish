@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.goldfish.daemon</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>source ~/code/goldfish/launchd/goldfish-env.sh &amp;&amp; cd ~/code/goldfish &amp;&amp; exec node dist/index.js start</string>
+    </array>
+
+    <!-- SETUP: Replace with the absolute path to your goldfish repo.
+         launchd cannot expand ~ or $HOME here — use a full path. -->
+    <key>WorkingDirectory</key>
+    <string>/Users/YOURUSERNAME/code/goldfish</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/goldfish-daemon.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/goldfish-daemon-err.log</string>
+</dict>
+</plist>

@@ -1,0 +1,43 @@
+# Goldfish Schedule
+# ─────────────────────────────────────────────────
+# Defines when Goldfish proactively reaches out on Slack.
+#
+# Syntax:
+#   at:      "8:30" | "8:30am" | "6pm" | "18:00"     — once a day
+#   every:   "hour" | "2 hours" | "4 hours"           — repeating interval
+#   between: "10am-5pm" | "10:00-17:00"               — constrains `every`
+#   days:    daily | weekdays | weekends | monday | mon,wed,fri
+#   cron:    "0 10-17 * * 1-5"                         — raw cron (overrides above)
+#
+# Run with: goldfish schedule:run
+# Cron:     * * * * * cd /path/to/goldfish && node dist/index.js schedule:run
+#
+# Copy this file to schedule.yaml and fill in your channel IDs.
+# Find channel IDs: click the channel name in Slack → scroll to the bottom of the modal.
+
+tasks:
+  - name: morning
+    type: morning
+    at: "8:30am"
+    channel: YOUR_CHANNEL_ID    # e.g. C0ABC123DEF
+
+  - name: heartbeat
+    type: heartbeat
+    every: hour
+    between: "10am-5pm"
+    days: weekdays
+    channel: YOUR_CHANNEL_ID
+
+  # Optional: autonomous exploration session
+  # The agent picks a topic and writes a long-form post.
+  # - name: exploration
+  #   type: exploration
+  #   at: "6pm"
+  #   channel: YOUR_CHANNEL_ID
+
+  # Optional: weekly review
+  # - name: weekly
+  #   type: weekly
+  #   at: "9am"
+  #   days: sunday
+  #   channel: YOUR_CHANNEL_ID
