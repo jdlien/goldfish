@@ -23,7 +23,7 @@ OpenClaw is an orchestration layer that routes messages to models like Claude. B
                ▼
 ┌─────────────────────────────────────────────────┐
 │           SLACK BOT DAEMON                      │
-│  (Node.js, long-running, ~640 lines)             │
+│  (Node.js, long-running, ~640 lines)            │
 │                                                 │
 │  • Receives Slack messages                      │
 │  • Maps threads → Claude sessions (SQLite)      │
@@ -109,7 +109,7 @@ slack_thread_ts  →  claude_session_id
 1234567890.002   →  e5f6g7h8-...
 ```
 
-### CWD and Identity Bootstrap
+### Working Directory and Identity Bootstrap
 
 Claude Code spawns in **the agent workspace directory**, not the goldfish repo. This means `CLAUDE.md` at workspace root bootstraps the agent's identity. Configurable via the `GOLDFISH_WORKSPACE` environment variable (defaults to `~/goldfish-workspace`).
 
