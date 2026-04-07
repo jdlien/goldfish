@@ -476,14 +476,40 @@ tasks:
     expect(() => loadSchedule(path)).toThrow('needs a "type"');
   });
 
-  it('rejects initiate task with no channel', () => {
-    const path = writeYaml('bad.yaml', `
+  it('rejects initiate task with no channel and no env default', () => {
+    const orig = process.env.GOLDFISH_DM_CHANNEL_ID;
+    delete process.env.GOLDFISH_DM_CHANNEL_ID;
+    try {
+      const path = writeYaml('bad.yaml', `
 tasks:
   - name: test
     type: morning
     at: "8:30"
 `);
-    expect(() => loadSchedule(path)).toThrow('needs a "channel"');
+      expect(() => loadSchedule(path)).toThrow('needs a "channel"');
+    } finally {
+      if (orig !== undefined) process.env.GOLDFISH_DM_CHANNEL_ID = orig;
+    }
+  });
+
+  it('accepts initiate task without channel when env default is set', () => {
+    const orig = process.env.GOLDFISH_DM_CHANNEL_ID;
+    process.env.GOLDFISH_DM_CHANNEL_ID = 'C_DEFAULT';
+    try {
+      const path = writeYaml('ok.yaml', `
+tasks:
+  - type: morning
+    at: "8:30"
+`);
+      const config = loadSchedule(path);
+      expect(config.tasks[0].name).toBe('morning');
+    } finally {
+      if (orig !== undefined) {
+        process.env.GOLDFISH_DM_CHANNEL_ID = orig;
+      } else {
+        delete process.env.GOLDFISH_DM_CHANNEL_ID;
+      }
+    }
   });
 
   it('accepts maintenance task without channel', () => {

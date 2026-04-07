@@ -199,8 +199,8 @@ export function loadSchedule(path: string): ScheduleConfig {
   for (const task of parsed.tasks) {
     if (!task.type) throw new Error(`Task "${task.name || '(unnamed)'}" needs a "type".`);
     if (!task.name) task.name = task.type;
-    if (INITIATE_TYPES.includes(task.type) && !task.channel) {
-      throw new Error(`Task "${task.name}" (type: ${task.type}) needs a "channel".`);
+    if (INITIATE_TYPES.includes(task.type) && !task.channel && !process.env.GOLDFISH_DM_CHANNEL_ID) {
+      throw new Error(`Task "${task.name}" (type: ${task.type}) needs a "channel" (or set GOLDFISH_DM_CHANNEL_ID in .env).`);
     }
     // Validate that the cron expression can be generated
     toCron(task);
