@@ -208,6 +208,7 @@ Options if you need overnight jobs to run reliably:
 - **Reschedule for waking hours.** Move the jobs to a time the machine is
   reliably on (e.g. 9:00 AM instead of 1:00 AM). This is the cheapest option
   and what most personal deployments should do.
+
 ### LaunchAgents Require an Active Login Session
 
 The daemon plist runs as a LaunchAgent under your user, so it stops when you're logged out. If you want Goldfish running while nobody is logged in, you'd need to move the plist to `/Library/LaunchDaemons/` and run it as a system service — that has its own setup and is not covered here.
@@ -255,9 +256,9 @@ a fresh node process each time and don't hold cached state.
 
 ## Logs
 
-| Service   | Log location                  |
-| --------- | ----------------------------- |
-| Daemon    | `/tmp/goldfish-daemon.log` (stdout), `/tmp/goldfish-daemon-err.log` (stderr) |
+| Service   | Log location                                                                        |
+| --------- | ----------------------------------------------------------------------------------- |
+| Daemon    | `/tmp/goldfish-daemon.log` (stdout), `/tmp/goldfish-daemon-err.log` (stderr)        |
 | Scheduler | `/tmp/goldfish-schedule.log` (all scheduled tasks — briefings, synthesis, indexing) |
 
 > **Tip:** Logs are in `/tmp/` which macOS clears on reboot. For persistent

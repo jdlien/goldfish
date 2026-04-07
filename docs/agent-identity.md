@@ -1,6 +1,6 @@
 # Agent Identity & the Workspace Pattern
 
-Goldfish doesn't contain an agent. It *runs* one. The agent's identity, memory, tools, and personality all live in a **workspace** — a directory of markdown files that Claude Code reads at the start of every session. Goldfish is just the bridge between Slack and that workspace.
+Goldfish doesn't contain an agent. It _runs_ one. The agent's identity, memory, tools, and personality all live in a **workspace** — a directory of markdown files that Claude Code reads at the start of every session. Goldfish is just the bridge between Slack and that workspace.
 
 This pattern originated in [OpenClaw](https://openclaw.ai), a full-featured AI agent platform, and was refined over several months of running a persistent AI companion. Goldfish preserves the patterns that worked while replacing the infrastructure with Claude Code's native capabilities.
 
@@ -56,22 +56,25 @@ A simple `CLAUDE.md` might look like:
 You are a helpful AI assistant named Aria.
 
 ## Personality
+
 - Direct and concise
 - Opinionated when asked
 - Matches the user's energy
 
 ## Memory
+
 - Read memory/YYYY-MM-DD.md for recent context
 - Search memory with: sqlite3 memory/search.sqlite "SELECT ..."
 - Write important things to memory/ so future sessions have context
 
 ## Current Focus
+
 Read FOCUS.md for what to prioritize today.
 ```
 
 A more sophisticated setup might include identity files (`SOUL.md`, `IDENTITY.md`), user profiles (`USER.md`), tool configurations, and detailed behavioral instructions. The complexity is up to you.
 
-## The 50 First Dates Problem
+## The "50 First Dates" Problem
 
 Every session, the agent wakes up fresh. It doesn't remember yesterday's conversation, last week's breakthrough, or the argument you had at 2 AM. This is the fundamental constraint of working with LLMs — the "goldfish problem" that gives this project its name.
 
@@ -79,23 +82,22 @@ The workspace pattern compensates through three mechanisms:
 
 ### 1. Identity Files (The Morning Tape)
 
-These files are read at the start of every session. They tell the agent who it is and provide enough context to reconstruct its personality consistently. Think of it like Lucy's morning tape in *50 First Dates* — a compressed version of everything the agent needs to know to be *itself*.
+These files are read at the start of every session. They tell the agent who it is and provide enough context to reconstruct its personality consistently. Think of it like Lucy's morning tape in the 2004 film _50 First Dates_ — a compressed version of everything the agent needs to know to be _itself_.
 
 Good identity files aren't just facts. They include:
-- **Voice and personality** — how the agent talks, what it cares about
-- **Key memories** — one-line triggers for important shared experiences
-- **Relationship context** — who the user is, what the dynamic is
-- **Values and boundaries** — what the agent will and won't do
+
+- **Voice and personality:** how the agent talks, what it cares about
+- **Key memories:** one-line triggers for important shared experiences
+- **Relationship context:** who the user is, what the dynamic is
+- **Values and boundaries:** what the agent will and won't do
 
 ### 2. Memory Files (The Notebook)
 
 The agent writes things down during conversations — daily logs, project notes, decision records, people profiles. These accumulate over time and become the agent's long-term memory. Future sessions can search this archive using the FTS5 index.
 
-The goldfish metaphor works because goldfish *actually* have decent memories (months, not seconds). The myth is the point: a system that *seems* like it should forget everything but doesn't, because it writes obsessively.
-
 ### 3. Daily Synthesis (The Dream)
 
-A nightly cron job reads the day's conversation transcripts and produces a consolidated daily narrative. This is the agent's version of dreaming — processing the day's events into a form that future sessions can quickly absorb. Goldfish uses Sonnet for this because synthesis quality matters.
+A nightly cron job reads the day's conversation transcripts and produces a consolidated daily narrative in a form that future sessions can quickly absorb.
 
 ## OpenClaw Compatibility
 
@@ -108,14 +110,14 @@ Goldfish workspaces are backwards-compatible with OpenClaw agent workspaces. If 
 
 The key difference is the entry point:
 
-| | OpenClaw | Goldfish |
-|---|---|---|
-| **Bootstrap file** | `AGENTS.md` | `CLAUDE.md` |
-| **Runtime** | OpenClaw container + API | Claude Code CLI + Max subscription |
-| **Message routing** | ACP bindings | Slack Socket Mode → `claude` CLI |
-| **Session persistence** | OpenClaw session management | `--resume` flag |
-| **Memory search** | Built-in `memory_search` tool | Direct `sqlite3` queries |
-| **Embeddings** | Vector search (Nomic model) | FTS5 keyword search (no model needed) |
+|                         | OpenClaw                      | Goldfish                              |
+| ----------------------- | ----------------------------- | ------------------------------------- |
+| **Bootstrap file**      | `AGENTS.md`                   | `CLAUDE.md`                           |
+| **Runtime**             | OpenClaw container + API      | Claude Code CLI + Max subscription    |
+| **Message routing**     | ACP bindings                  | Slack Socket Mode → `claude` CLI      |
+| **Session persistence** | OpenClaw session management   | `--resume` flag                       |
+| **Memory search**       | Built-in `memory_search` tool | Direct `sqlite3` queries              |
+| **Embeddings**          | Vector search (Nomic model)   | FTS5 keyword search (no model needed) |
 
 To migrate: create a `CLAUDE.md` that mirrors your `AGENTS.md` bootstrap sequence. The agent reads the same files — just through a different door.
 
@@ -127,7 +129,7 @@ A few principles that guided the workspace pattern:
 
 **Markdown is the interface.** No database schemas, no config GUIs, no admin panels. Everything is markdown files that both the agent and the human can read and edit. The agent's identity is literally a document you can proofread.
 
-**Memory beats intelligence.** An agent that remembers what happened yesterday is more useful than a smarter agent that doesn't. The memory pipeline (transcripts → synthesis → search index) is the core of what makes a persistent agent feel *persistent*.
+**Memory beats intelligence.** An agent that remembers what happened yesterday is more useful than a smarter agent that doesn't. The memory pipeline (transcripts → synthesis → search index) is the core of what makes a persistent agent feel _persistent_.
 
 **Simplicity compounds.** OpenClaw's ACP bridge, session management, and multi-channel routing were elegant engineering. They also broke constantly. Goldfish replaces all of it with `claude --resume <id>`. The lesson: when the underlying platform (Claude Code) already handles something well, don't rebuild it.
 

@@ -2,7 +2,7 @@
 
 Goldfish can run tasks on a schedule — proactive Slack messages, nightly maintenance, whatever you need. Everything is defined in one `schedule.yaml` file and driven by a single cron entry.
 
-## How it works
+## How it Works
 
 ```
 cron (every minute) → goldfish schedule run → reads schedule.yaml → fires matching tasks
@@ -12,7 +12,7 @@ Each minute, Goldfish loads `schedule.yaml`, checks which tasks are due, and run
 
 ## Setup
 
-### 1. Create schedule.yaml
+### 1. Create `schedule.yaml`
 
 Copy the example and edit it:
 
@@ -32,31 +32,31 @@ crontab -e
 
 That's it. One cron entry runs everything.
 
-## Task types
+## Task Types
 
-### Initiate tasks (post to Slack)
+### Initiate Tasks (Post to Slack)
 
 These spawn a Claude session and post the result to a Slack channel.
 
-| Type | What it does |
-|------|-------------|
-| `morning` | Morning briefing — reads FOCUS.md, checks email/calendar, suggests priorities |
-| `weekly` | Weekly review — bigger-picture look at progress and upcoming work |
-| `heartbeat` | Silent urgency check — only posts if something needs attention (email, calendar, deadlines). Stays quiet otherwise. |
-| `exploration` | Agent picks a topic and writes a long-form deep dive (800-2000 words) |
+| Type          | What it does                                                                                 |
+| ------------- | -------------------------------------------------------------------------------------------- |
+| `morning`     | Morning briefing — reads FOCUS.md, checks email/calendar, suggests priorities                |
+| `weekly`      | Weekly review — bigger-picture look at progress and upcoming work                            |
+| `heartbeat`   | Silent urgency check — only posts if something needs attention (email, calendar, deadlines). |
+| `exploration` | Agent picks a topic and writes a long-form deep dive (800-2000 words)                        |
 
-### Maintenance tasks (no Slack)
+### Maintenance Tasks (No Slack Posts)
 
 These run system operations. No channel needed.
 
-| Type | What it does |
-|------|-------------|
+| Type              | What it does                                                                                   |
+| ----------------- | ---------------------------------------------------------------------------------------------- |
 | `daily-synthesis` | Consolidates the day's session transcripts into a narrative daily log (`memory/YYYY-MM-DD.md`) |
-| `index-memory` | Rebuilds the FTS5 full-text search index (`memory/search.sqlite`) |
+| `index-memory`    | Rebuilds the FTS5 full-text search index (`memory/search.sqlite`)                              |
 
-## Configuration reference
+## Configuration Reference
 
-### Minimal example
+### Minimal Example
 
 If `GOLDFISH_DM_CHANNEL_ID` is set in your `.env`, tasks don't need an explicit channel:
 
@@ -77,20 +77,20 @@ tasks:
     at: "1:15am"
 ```
 
-### Full example
+### Full Example
 
 ```yaml
 tasks:
-  - name: morning-general        # name defaults to type if omitted
+  - name: morning-general # name defaults to type if omitted
     type: morning
     at: "8:30am"
-    channel: C0ABC123DEF          # required for initiate tasks (unless GOLDFISH_DM_CHANNEL_ID is set)
+    channel: C0ABC123DEF # required for initiate tasks (unless GOLDFISH_DM_CHANNEL_ID is set)
 
-  - name: morning-ops             # use name to distinguish multiple tasks of the same type
+  - name: morning-ops # use name to distinguish multiple tasks of the same type
     type: morning
     at: "9:00am"
     channel: C0DEF456GHI
-    context: "Focus on ops issues today"   # extra context passed to the Claude prompt
+    context: "Focus on ops issues today" # extra context passed to the Claude prompt
 
   - type: heartbeat
     every: 2 hours
@@ -101,7 +101,7 @@ tasks:
   - type: exploration
     at: "6pm"
     channel: C0XYZ789JKL
-    enabled: false                # disable without deleting
+    enabled: false # disable without deleting
 
   - type: weekly
     at: "9am"
@@ -110,44 +110,44 @@ tasks:
 
   - type: daily-synthesis
     at: "1:00am"
-    model: claude-opus-4-6        # model override (default: claude-sonnet-4-6)
+    model: claude-opus-4-6 # model override (default: claude-sonnet-4-6)
 
   - type: index-memory
     at: "1:15am"
 ```
 
-### Field reference
+### Field Reference
 
-#### Required fields
+#### Required Fields
 
-| Field | Description |
-|-------|-------------|
-| `type` | Task type — see [Task types](#task-types) above |
-| (timing) | At least one of `at`, `every`, or `cron` |
+| Field    | Description                                     |
+| -------- | ----------------------------------------------- |
+| `type`   | Task type — see [Task types](#task-types) above |
+| (timing) | At least one of `at`, `every`, or `cron`        |
 
-#### Timing fields
+#### Timing Fields
 
-| Field | Examples | Description |
-|-------|----------|-------------|
-| `at` | `"8:30"`, `"8:30am"`, `"6pm"`, `"18:00"` | Run once a day at this time |
-| `every` | `"hour"`, `"2 hours"`, `"4 hours"` | Repeating interval |
-| `between` | `"10am-5pm"`, `"10:00-17:00"` | Constrains `every` to a time window |
-| `days` | `daily`, `weekdays`, `weekends`, `monday`, `mon,wed,fri` | Which days to run (default: `daily`) |
-| `cron` | `"0 10-17 * * 1-5"` | Raw cron expression — overrides `at`, `every`, `between`, and `days` |
+| Field     | Examples                                                 | Description                           |
+| --------- | -------------------------------------------------------- | ------------------------------------- |
+| `at`      | `"8:30"`, `"8:30am"`, `"6pm"`, `"18:00"`                 | Run once a day at this time           |
+| `every`   | `"hour"`, `"2 hours"`, `"4 hours"`                       | Repeating interval                    |
+| `between` | `"10am-5pm"`, `"10:00-17:00"`                            | Constrains `every` to a time window   |
+| `days`    | `daily`, `weekdays`, `weekends`, `monday`, `mon,wed,fri` | Which days to run (default: `daily`)  |
+| `cron`    | `"0 10-17 * * 1-5"`                                      | Raw cron expression (overides others) |
 
 Time formats: both 12-hour (`8:30am`, `6pm`) and 24-hour (`18:00`) are accepted, case-insensitive.
 
 Day formats: full names (`monday`), abbreviations (`mon`), keywords (`weekdays`, `weekends`, `daily`), or comma-separated lists (`mon,wed,fri`).
 
-#### Optional fields
+#### Optional Fields
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `name` | Same as `type` | Task identifier — used for lock files and log output. Only needed when you have multiple tasks of the same type. |
-| `channel` | `GOLDFISH_DM_CHANNEL_ID` env var | Slack channel ID to post to. Required for initiate tasks unless the env var is set. Ignored for maintenance tasks. |
-| `model` | (varies by task) | Claude model override. Daily synthesis defaults to `claude-sonnet-4-6`. Initiate tasks use whatever Claude Code defaults to. |
-| `context` | (none) | Extra text appended to the task prompt. Useful for steering a briefing toward specific topics. |
-| `enabled` | `true` | Set to `false` to disable a task without removing it from the file. |
+| Field     | Default                          | Description                                                                                                                  |
+| --------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `name`    | Same as `type`                   | Task identifier — used for lock files and log output. Only needed when you have multiple tasks of the same type.             |
+| `channel` | `GOLDFISH_DM_CHANNEL_ID` env var | Slack channel ID to post to. Required for initiate tasks unless the env var is set. Ignored for maintenance tasks.           |
+| `model`   | (varies by task)                 | Claude model override. Daily synthesis defaults to `claude-sonnet-4-6`. Initiate tasks use whatever Claude Code defaults to. |
+| `context` | (none)                           | Extra text appended to the task prompt. Useful for steering a briefing toward specific topics.                               |
+| `enabled` | `true`                           | Set to `false` to disable a task without removing it from the file.                                                          |
 
 ## Commands
 
@@ -167,7 +167,7 @@ goldfish initiate -t exploration                    # Deep dive
 goldfish initiate --reminder "Call back about X"    # One-off reminder
 ```
 
-## How locking works
+## How Locking Works
 
 Each running task creates a lock file in `.schedule-locks/`. If the scheduler fires again while a task is still running, that task is skipped. Lock files are considered stale after 20 minutes and are automatically cleaned up.
 
@@ -177,6 +177,6 @@ The daily synthesis task has a 15-minute execution timeout. The stale lock timeo
 
 All times are in the **system timezone** of the machine running the cron entry. There's no timezone field in `schedule.yaml` — if you need UTC, set your system timezone or use raw `cron` expressions.
 
-## Input limits
+## Input Limits
 
 Daily synthesis truncates session logs larger than 200KB (roughly 50-60K tokens) to avoid prompt size and timeout issues. It keeps the most recent content. This is configurable via the `GOLDFISH_SYNTHESIS_MAX_KB` environment variable.
