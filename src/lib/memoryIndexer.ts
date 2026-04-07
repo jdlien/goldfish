@@ -4,8 +4,8 @@
  * Walks markdown files in the workspace, chunks them by heading,
  * and builds a full-text search index in SQLite.
  *
- * Replaces the Python indexer (scripts/index-memory.py) with a
- * native TypeScript implementation using better-sqlite3.
+ * Native TypeScript implementation using better-sqlite3.
+ * Run via schedule.yaml (index-memory task) or CLI: node dist/index.js index-memory
  */
 
 import Database from 'better-sqlite3';
