@@ -357,18 +357,61 @@ export async function start(): Promise<void> {
           logger.error({ error }, 'Native streaming Claude invocation failed');
           const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
-          // The streamed content is already rendered in Slack via the
-          // native stream — don't re-send it. chat.stopStream({markdown_text})
-          // APPENDS its markdown as a final block rather than replacing the
-          // buffer, so passing the full accumulated text produces a duplicated
-          // copy of the response below the streamed one. Pass only a short
-          // error marker (guaranteed to fit under any limit).
+          // Abort the stream with a short error marker. We can't pass the
+          // full accumulated text because chat.stopStream({markdown_text})
+          // APPENDS rather than replaces, which would duplicate everything.
           const accumulated = nativeStreamer.getRawText();
           const fallbackText = accumulated
             ? `_⚠️ Response interrupted: ${errorMessage}_`
             : `❌ Error: ${errorMessage}`;
 
           await nativeStreamer.abort(fallbackText);
+
+          // If there's unsent text (the stream died mid-response), post
+          // the remainder as a regular follow-up message so the user sees
+          // the complete response instead of a truncated one.
+          const unsent = nativeStreamer.getUnsentText();
+          if (unsent.trim()) {
+            logger.info(
+              { unsentLength: unsent.length },
+              'Posting unsent text as follow-up message after stream failure',
+            );
+            try {
+              await slackClient!.getWebClient().chat.postMessage({
+                channel: channelId,
+                text: unsent,
+                thread_ts: streamThreadTs,
+              });
+            } catch (postError) {
+              logger.error(
+                { error: postError },
+                'Failed to post unsent text as follow-up',
+              );
+            }
+
+            // Still save the full response to the transcript
+            result = accumulated;
+            if (claudeSessionId && claudeSessionId !== session.claudeSessionId) {
+              await repo.updateClaudeSessionId(session.id, claudeSessionId);
+            }
+            await repo.saveMessage({
+              sessionId: session.id,
+              slackTs: streamThreadTs,
+              direction: 'outbound',
+              content: result,
+            });
+            writeTranscript({
+              timestamp: new Date().toISOString(),
+              slackChannel: channelId,
+              slackThread: sessionKey,
+              userMessage,
+              assistantResponse: result,
+              claudeSessionId: claudeSessionId ?? null,
+              durationMs,
+              costUsd,
+            });
+          }
+
           return;
         }
 

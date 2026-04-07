@@ -18,6 +18,14 @@ function createMockWebClient(streamer: ReturnType<typeof createMockStreamer>) {
   };
 }
 
+/** Create a Slack platform error matching the shape isSlackPlatformError checks. */
+function slackError(code: string): Error & { data: { error: string } } {
+  const err = new Error(`An API error occurred: ${code}`) as any;
+  err.code = 'slack_webapi_platform_error';
+  err.data = { ok: false, error: code };
+  return err;
+}
+
 describe('SlackNativeStreamer', () => {
   let mockStreamer: ReturnType<typeof createMockStreamer>;
   let mockClient: ReturnType<typeof createMockWebClient>;
@@ -537,6 +545,258 @@ describe('SlackNativeStreamer', () => {
       await streamer.startTool('late', 'Read');
 
       expect(mockStreamer.append).not.toHaveBeenCalled();
+    });
+  });
+
+  // =================================================================
+  // BUG: No way to know what text was lost after a streaming failure.
+  //
+  // When an append fails (stream auto-finalized, network error, etc),
+  // rawText has the full content but there's no way to know which
+  // portion was actually delivered to Slack vs lost. The caller needs
+  // getUnsentText() to post the remainder as a follow-up message.
+  // =================================================================
+
+  describe('unsent text tracking (getUnsentText) — RED: requires new feature', () => {
+    it('exposes a getUnsentText() method', () => {
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
+      expect(typeof streamer.getUnsentText).toBe('function');
+    });
+
+    it('returns empty string when all text was successfully sent', async () => {
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
+      streamer.start();
+
+      await streamer.appendText('hello ');
+      await streamer.appendText('world');
+
+      expect(streamer.getUnsentText()).toBe('');
+    });
+
+    it('returns the failed chunk when append throws', async () => {
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
+      streamer.start();
+
+      await streamer.appendText('sent ok ');
+
+      mockStreamer.append.mockRejectedValueOnce(new Error('rate_limited'));
+      await expect(streamer.appendText('lost chunk')).rejects.toThrow('rate_limited');
+
+      // rawText has everything, but only the first chunk made it to Slack
+      expect(streamer.getRawText()).toBe('sent ok lost chunk');
+      expect(streamer.getUnsentText()).toBe('lost chunk');
+    });
+
+    it('tracks confirmed bytes correctly across a successful rollover', async () => {
+      const streamer2 = createMockStreamer();
+      mockClient.chatStream
+        .mockReturnValueOnce(mockStreamer)
+        .mockReturnValueOnce(streamer2);
+
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
+      streamer.start();
+
+      await streamer.appendText('aaa');
+
+      // Stream dies, triggers rollover + retry on new stream
+      mockStreamer.append.mockRejectedValueOnce(
+        slackError('message_not_in_streaming_state'),
+      );
+      mockStreamer.stop.mockRejectedValueOnce(
+        slackError('message_not_in_streaming_state'),
+      );
+
+      await streamer.appendText('bbb');
+
+      // Both chunks confirmed (just on different streams)
+      expect(streamer.getRawText()).toBe('aaabbb');
+      expect(streamer.getUnsentText()).toBe('');
+    });
+
+    it('reports unsent text when rollover retry also fails', async () => {
+      const streamer2 = createMockStreamer();
+      mockClient.chatStream
+        .mockReturnValueOnce(mockStreamer)
+        .mockReturnValueOnce(streamer2);
+
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
+      streamer.start();
+
+      await streamer.appendText('sent ok ');
+
+      mockStreamer.append.mockRejectedValueOnce(
+        slackError('message_not_in_streaming_state'),
+      );
+      mockStreamer.stop.mockRejectedValueOnce(
+        slackError('message_not_in_streaming_state'),
+      );
+      streamer2.append.mockRejectedValueOnce(new Error('also broken'));
+
+      await expect(streamer.appendText('lost text')).rejects.toThrow('also broken');
+
+      expect(streamer.getRawText()).toBe('sent ok lost text');
+      expect(streamer.getUnsentText()).toBe('lost text');
+    });
+
+    it('handles multiple successes then a late failure', async () => {
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
+      streamer.start();
+
+      await streamer.appendText('p1. ');
+      await streamer.appendText('p2. ');
+      await streamer.appendText('p3. ');
+
+      mockStreamer.append.mockRejectedValueOnce(new Error('connection reset'));
+      await expect(streamer.appendText('p4.')).rejects.toThrow();
+
+      expect(streamer.getRawText()).toBe('p1. p2. p3. p4.');
+      expect(streamer.getUnsentText()).toBe('p4.');
+    });
+
+    it('unsent text survives abort()', async () => {
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
+      streamer.start();
+
+      await streamer.appendText('sent ');
+
+      mockStreamer.append.mockRejectedValueOnce(new Error('dead'));
+      await expect(streamer.appendText('not sent')).rejects.toThrow('dead');
+
+      await streamer.abort('⚠️ interrupted');
+
+      // Caller can still retrieve unsent text after abort
+      expect(streamer.getUnsentText()).toBe('not sent');
+    });
+
+    it('proactive rollover at threshold preserves confirmed byte count', async () => {
+      const streamer2 = createMockStreamer();
+      mockClient.chatStream
+        .mockReturnValueOnce(mockStreamer)
+        .mockReturnValueOnce(streamer2);
+
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
+      streamer.start();
+
+      const bigChunk = 'x'.repeat(7900);
+      await streamer.appendText(bigChunk);
+
+      // Triggers proactive rollover (7900 + 200 > 8000)
+      const overflowChunk = 'y'.repeat(200);
+      await streamer.appendText(overflowChunk);
+
+      expect(streamer.getRawText()).toBe(bigChunk + overflowChunk);
+      expect(streamer.getUnsentText()).toBe('');
+    });
+  });
+
+  // =================================================================
+  // Existing behavior tests for streaming error recovery that should
+  // already pass on the current code (from commit 16de4ba).
+  // =================================================================
+
+  describe('message_not_in_streaming_state — existing recovery', () => {
+    it('rolls over to a new stream on append when stream is auto-finalized', async () => {
+      const streamer2 = createMockStreamer();
+      mockClient.chatStream
+        .mockReturnValueOnce(mockStreamer)
+        .mockReturnValueOnce(streamer2);
+
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
+      streamer.start();
+
+      await streamer.appendText('first chunk ');
+
+      mockStreamer.append.mockRejectedValueOnce(
+        slackError('message_not_in_streaming_state'),
+      );
+      mockStreamer.stop.mockRejectedValueOnce(
+        slackError('message_not_in_streaming_state'),
+      );
+
+      await streamer.appendText('second chunk');
+
+      expect(mockClient.chatStream).toHaveBeenCalledTimes(2);
+      expect(streamer2.append).toHaveBeenCalledWith({
+        markdown_text: 'second chunk',
+      });
+    });
+
+    it('finish() swallows message_not_in_streaming_state and does not throw', async () => {
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
+      streamer.start();
+
+      await streamer.appendText('some text');
+
+      mockStreamer.stop.mockRejectedValueOnce(
+        slackError('message_not_in_streaming_state'),
+      );
+
+      await expect(streamer.finish()).resolves.toBeUndefined();
+      expect(streamer.isStopped()).toBe(true);
+    });
+
+    it('finish() posts final markdown via postMessage when stream is auto-finalized', async () => {
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'thread-1');
+      streamer.start();
+
+      mockStreamer.stop.mockRejectedValueOnce(
+        slackError('message_not_in_streaming_state'),
+      );
+
+      await streamer.finish('Final paragraph');
+
+      expect(mockClient.chat.postMessage).toHaveBeenCalledWith({
+        channel: 'C123',
+        text: 'Final paragraph',
+        thread_ts: 'thread-1',
+      });
+    });
+
+    it('finish() without finalMarkdown does NOT post when stream is auto-finalized', async () => {
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
+      streamer.start();
+
+      await streamer.appendText('already streamed');
+
+      mockStreamer.stop.mockRejectedValueOnce(
+        slackError('message_not_in_streaming_state'),
+      );
+
+      await streamer.finish();
+
+      expect(mockClient.chat.postMessage).not.toHaveBeenCalled();
+    });
+
+    it('finish() re-throws non-streaming errors', async () => {
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
+      streamer.start();
+
+      mockStreamer.stop.mockRejectedValueOnce(new Error('network timeout'));
+
+      await expect(streamer.finish()).rejects.toThrow('network timeout');
+    });
+  });
+
+  describe('msg_too_long — existing recovery', () => {
+    it('rolls over and retries on msg_too_long during appendText', async () => {
+      const streamer2 = createMockStreamer();
+      mockClient.chatStream
+        .mockReturnValueOnce(mockStreamer)
+        .mockReturnValueOnce(streamer2);
+
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
+      streamer.start();
+
+      await streamer.appendText('first chunk ');
+
+      mockStreamer.append.mockRejectedValueOnce(slackError('msg_too_long'));
+
+      await streamer.appendText('overflowed chunk');
+
+      expect(mockClient.chatStream).toHaveBeenCalledTimes(2);
+      expect(streamer2.append).toHaveBeenCalledWith({
+        markdown_text: 'overflowed chunk',
+      });
     });
   });
 });

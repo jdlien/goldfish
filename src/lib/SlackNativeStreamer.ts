@@ -73,6 +73,8 @@ export class SlackNativeStreamer {
   private streamer: ChatStreamer | null = null;
   /** Raw accumulated markdown (for transcript/DB persistence) */
   private rawText = '';
+  /** Bytes of rawText that were confirmed sent to Slack (via successful append). */
+  private confirmedSentBytes = 0;
   private stopped = false;
   /**
    * Approximate bytes written to the current streamer instance since
@@ -163,6 +165,7 @@ export class SlackNativeStreamer {
     try {
       await this.streamer!.append({ markdown_text: markdown });
       this.bytesInCurrentStream += markdown.length;
+      this.confirmedSentBytes += markdown.length;
     } catch (error) {
       if (isRecoverableStreamError(error) && !this.stopped) {
         // Reactive rollover: Slack said the current stream is full or expired.
@@ -175,6 +178,7 @@ export class SlackNativeStreamer {
         try {
           await this.streamer!.append({ markdown_text: markdown });
           this.bytesInCurrentStream += markdown.length;
+          this.confirmedSentBytes += markdown.length;
           return;
         } catch (retryError) {
           logger.error(
@@ -557,6 +561,15 @@ export class SlackNativeStreamer {
    */
   getRawText(): string {
     return this.rawText;
+  }
+
+  /**
+   * Get the portion of rawText that was NOT confirmed sent to Slack.
+   * When a stream dies mid-response (e.g. Slack auto-finalizes during
+   * a long tool call), this returns the text the user never saw.
+   */
+  getUnsentText(): string {
+    return this.rawText.slice(this.confirmedSentBytes);
   }
 
   /**
