@@ -125,7 +125,7 @@ Required variables:
 ### 3. Test the connection
 
 ```bash
-pnpm run cli auth test
+pnpm cli auth test
 ```
 
 You should see your workspace name, bot name, and Claude CLI version.
@@ -178,7 +178,7 @@ scheduled job without waiting for its next fire time, use
 All proactive outreach types share a single CLI entrypoint:
 
 ```bash
-pnpm run cli initiate -t <type>
+pnpm cli initiate -t <type>
 ```
 
 Supported types: `heartbeat`, `morning`, `weekly`, `exploration`.

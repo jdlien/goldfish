@@ -162,7 +162,7 @@ export async function init(options: InitOptions): Promise<void> {
     console.log(`  1. Set ${chalk.bold('GOLDFISH_WORKSPACE')}=${workspacePath} in your .env`);
     console.log(`  2. Edit ${chalk.bold('CLAUDE.md')} to customize ${name}'s personality`);
     console.log(`  3. Edit ${chalk.bold('schedule.yaml')} with your Slack channel IDs`);
-    console.log(`  4. Run ${chalk.bold('pnpm run cli start')} and say hello\n`);
+    console.log(`  4. Run ${chalk.bold('pnpm cli start')} and say hello\n`);
 
   } catch (error) {
     rl.close();

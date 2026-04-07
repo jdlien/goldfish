@@ -7,8 +7,8 @@ AI agent runtime: a Slack bot that spawns Claude Code sessions per message, with
 ```bash
 pnpm install
 cp .env.example .env       # Fill in Slack tokens + GOLDFISH_WORKSPACE
-pnpm run cli auth test     # Verify Slack connection + Claude CLI
-pnpm run cli start         # Run in dev mode (tsx, no build needed)
+pnpm cli auth test     # Verify Slack connection + Claude CLI
+pnpm cli start         # Run in dev mode (tsx, no build needed)
 ```
 
 For production: `pnpm run build && node dist/index.js start` (or use launchd — see `docs/deployment-macos.md`).
@@ -16,12 +16,12 @@ For production: `pnpm run build && node dist/index.js start` (or use launchd —
 ## Commands
 
 ```bash
-pnpm run cli start                              # Start bot (dev, tsx)
-pnpm run cli auth test                          # Test Slack + Claude
-pnpm run cli send -m "Hello" -c <channel>       # Send a message
-pnpm run cli upload -f file.pdf -c <channel>    # Upload a file
-pnpm run cli initiate -t morning                # Trigger morning briefing
-pnpm run cli initiate -t morning --dry-run      # Preview briefing prompt
+pnpm cli start                              # Start bot (dev, tsx)
+pnpm cli auth test                          # Test Slack + Claude
+pnpm cli send -m "Hello" -c <channel>       # Send a message
+pnpm cli upload -f file.pdf -c <channel>    # Upload a file
+pnpm cli initiate -t morning                # Trigger morning briefing
+pnpm cli initiate -t morning --dry-run      # Preview briefing prompt
 pnpm run build                                  # Compile TypeScript to dist/
 pnpm run test                                   # Run tests (vitest)
 ```

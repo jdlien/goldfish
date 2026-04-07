@@ -59,13 +59,13 @@ pnpm install
 cp .env.example .env
 
 # Create an agent workspace (interactive — sets up identity, memory, prompts, schedule)
-pnpm run cli init
+pnpm cli init
 
 # Test connection
-pnpm run cli auth test
+pnpm cli auth test
 
 # Start the bot
-pnpm run cli start
+pnpm cli start
 ```
 
 ## Configuration

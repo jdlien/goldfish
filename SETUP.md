@@ -124,10 +124,10 @@ Update `GOLDFISH_WORKSPACE` in your `.env` to point at this directory.
 
 ```bash
 # Verify Slack connection
-pnpm run cli auth test
+pnpm cli auth test
 
 # Start the bot (foreground, for testing)
-pnpm run cli start
+pnpm cli start
 ```
 
 Send a DM to your bot in Slack. You should get a response. If you see "Listening for messages..." in the terminal, it's working.
