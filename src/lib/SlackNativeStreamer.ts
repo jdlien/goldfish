@@ -164,12 +164,12 @@ export class SlackNativeStreamer {
       await this.streamer!.append({ markdown_text: markdown });
       this.bytesInCurrentStream += markdown.length;
     } catch (error) {
-      if (isMsgTooLong(error) && !this.stopped) {
-        // Reactive rollover: Slack said the current stream is full.
+      if (isRecoverableStreamError(error) && !this.stopped) {
+        // Reactive rollover: Slack said the current stream is full or expired.
         // Open a fresh stream and retry the chunk once.
         logger.warn(
           { bytesInCurrentStream: this.bytesInCurrentStream },
-          'Stream hit msg_too_long; rolling over to a new chatStream',
+          'Stream hit recoverable error; rolling over to a new chatStream',
         );
         await this.rollover();
         try {
@@ -330,10 +330,10 @@ export class SlackNativeStreamer {
       });
       this.bytesInCurrentStream += approxBytes;
     } catch (error) {
-      if (isMsgTooLong(error) && !this.stopped) {
+      if (isRecoverableStreamError(error) && !this.stopped) {
         logger.warn(
           { toolId, toolName },
-          'startTool hit msg_too_long; rolling over',
+          'startTool hit recoverable stream error; rolling over',
         );
         // rollover() carries pendingTools across AND re-emits an
         // in_progress chunk for this tool on the new stream, so no
@@ -405,10 +405,10 @@ export class SlackNativeStreamer {
       this.bytesInCurrentStream += approxBytes;
       this.pendingTools.delete(toolId);
     } catch (error) {
-      if (isMsgTooLong(error) && !this.stopped) {
+      if (isRecoverableStreamError(error) && !this.stopped) {
         logger.warn(
           { toolId },
-          'completeToolWithOutput hit msg_too_long; rolling over and retrying',
+          'completeToolWithOutput hit recoverable stream error; rolling over and retrying',
         );
         // pendingTools still has this tool (we only delete on success),
         // so rollover() will re-emit in_progress for it on the new stream.
@@ -487,6 +487,24 @@ export class SlackNativeStreamer {
       }
       logger.debug('Native stream stopped');
     } catch (error) {
+      // If the stream was already finalized by Slack (e.g. due to inactivity
+      // during a long tool execution), don't throw — the message was already
+      // delivered. Post any final text as a regular message instead.
+      if (isNotInStreamingState(error)) {
+        logger.warn('Stream already finalized by Slack — posting final text as regular message');
+        if (finalMarkdown) {
+          try {
+            await this.webClient.chat.postMessage({
+              channel: this.channel,
+              text: finalMarkdown,
+              thread_ts: this.threadTs,
+            });
+          } catch (postError) {
+            logger.error({ error: postError }, 'Fallback postMessage for final text also failed');
+          }
+        }
+        return;
+      }
       logger.error({ error }, 'Failed to stop native stream');
       throw error;
     }
@@ -556,12 +574,36 @@ export class SlackNativeStreamer {
  * Matching on either path keeps us robust to SDK version changes.
  */
 function isMsgTooLong(error: unknown): boolean {
+  return isSlackPlatformError(error, 'msg_too_long');
+}
+
+/**
+ * True if the error is Slack's `message_not_in_streaming_state` error.
+ * This occurs when Slack auto-finalizes a stream due to inactivity (e.g.
+ * during a long tool execution) and we try to append/stop afterward.
+ */
+function isNotInStreamingState(error: unknown): boolean {
+  return isSlackPlatformError(error, 'message_not_in_streaming_state');
+}
+
+/**
+ * True if the error is a recoverable streaming error — one where rolling
+ * over to a fresh stream is the right response.
+ */
+function isRecoverableStreamError(error: unknown): boolean {
+  return isMsgTooLong(error) || isNotInStreamingState(error);
+}
+
+/**
+ * Check if an error matches a specific Slack platform error code.
+ */
+function isSlackPlatformError(error: unknown, code: string): boolean {
   if (!error || typeof error !== 'object') return false;
   const err = error as { message?: unknown; data?: { error?: unknown } };
-  if (typeof err.message === 'string' && err.message.includes('msg_too_long')) {
+  if (typeof err.message === 'string' && err.message.includes(code)) {
     return true;
   }
-  if (err.data && typeof err.data === 'object' && err.data.error === 'msg_too_long') {
+  if (err.data && typeof err.data === 'object' && err.data.error === code) {
     return true;
   }
   return false;
