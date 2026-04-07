@@ -5,7 +5,7 @@
 
 import chalk from 'chalk';
 import { createInterface } from 'readline/promises';
-import { existsSync, mkdirSync, writeFileSync, copyFileSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, copyFileSync, readdirSync } from 'fs';
 import { join, resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -125,6 +125,25 @@ export async function init(options: InitOptions): Promise<void> {
     } else {
       writeFileSync(focusPath, buildFocusMd());
       console.log(chalk.green(`  Created FOCUS.md`));
+    }
+
+    // Copy prompt templates (only files that don't already exist)
+    const promptsDir = join(workspacePath, 'prompts');
+    const templatePromptsDir = join(REPO_ROOT, 'workspace-template', 'prompts');
+    if (existsSync(templatePromptsDir)) {
+      if (!existsSync(promptsDir)) {
+        mkdirSync(promptsDir, { recursive: true });
+      }
+      const promptFiles = readdirSync(templatePromptsDir).filter(f => f.endsWith('.md'));
+      for (const file of promptFiles) {
+        const target = join(promptsDir, file);
+        if (existsSync(target)) {
+          console.log(chalk.yellow(`  Skipped prompts/${file} (already exists)`));
+        } else {
+          copyFileSync(join(templatePromptsDir, file), target);
+          console.log(chalk.green(`  Created prompts/${file}`));
+        }
+      }
     }
 
     // Copy schedule.example.yaml → schedule.yaml (in the repo, not workspace)

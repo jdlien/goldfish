@@ -4,6 +4,8 @@
  */
 
 import chalk from 'chalk';
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
 import { createSlackClientFromEnv } from '../adapters/SlackBoltClient.js';
 import { ClaudeRunner } from '../adapters/ClaudeRunner.js';
 import { SqliteRepo } from '../adapters/SqliteRepo.js';
@@ -23,8 +25,19 @@ export interface InitiateOptions {
 }
 
 /**
- * Build the proactive prompt. Rather than depending on external briefing scripts,
- * we give Claude full workspace access and let it gather context itself.
+ * Read a prompt file from the workspace's prompts/ directory.
+ * Returns the file contents with {{DATE}} replaced, or null if not found.
+ */
+function loadWorkspacePrompt(type: string): string | null {
+  const promptPath = join(WORKSPACE_PATH, 'prompts', `${type}.md`);
+  if (!existsSync(promptPath)) return null;
+  const content = readFileSync(promptPath, 'utf-8');
+  return content.replaceAll('{{DATE}}', new Date().toISOString().slice(0, 10));
+}
+
+/**
+ * Build the proactive prompt. Loads from workspace prompts/ directory first,
+ * falling back to built-in defaults if no custom prompt file exists.
  */
 export function buildPrompt(options: InitiateOptions): string {
   const { type, context, reminder } = options;
@@ -40,100 +53,103 @@ export function buildPrompt(options: InitiateOptions): string {
     ].join('\n');
   }
 
-  if (type === 'heartbeat') {
-    const sections = [
-      'This is a quiet background heartbeat check.',
-      'You are NOT initiating a conversation. You are checking if anything needs the user\'s attention.',
-      '',
-      '## What to check',
-      '',
-      '1. Check your workspace CLAUDE.md for any configured tools (email, calendar, etc.) and run them',
-      '2. Read FOCUS.md — are there deadlines approaching or items at risk?',
-      `4. Read memory/${new Date().toISOString().slice(0, 10)}.md for today's context`,
-      '',
-      '## Response rules',
-      '',
-      'CRITICAL: If there is NOTHING actionable — no urgent emails, no imminent calendar events,',
-      'no deadlines at risk — respond with EXACTLY the text "HEARTBEAT_OK" and nothing else.',
-      'Do NOT say "all clear" or "nothing to report." Just "HEARTBEAT_OK".',
-      '',
-      'ONLY send a real message if something genuinely needs attention:',
-      '- VIP email that needs a response',
-      '- Calendar event starting within 2 hours',
-      '- FOCUS.md deadline at risk with no visible progress',
-      '- Something time-sensitive from yesterday\'s context',
-      '',
-      'If you DO have something to say, be brief — 2-4 lines max.',
-      'Use Slack mrkdwn. No headers, no emoji spam. Just the actionable info.',
-      'Tone: a friend tapping you on the shoulder, not a project manager.',
-    ];
+  // Try workspace prompt file first
+  let prompt = loadWorkspacePrompt(type);
 
-    if (context) {
-      sections.push('', '## Additional Context', '', context);
-    }
-
-    return sections.join('\n');
+  // Fall back to built-in defaults
+  if (!prompt) {
+    prompt = getDefaultPrompt(type);
   }
-
-  if (type === 'exploration') {
-    const sections = [
-      'This is your evening self-study session.',
-      'You are posting an exploration to Slack — the user may or may not engage with it.',
-      '',
-      '## What to do',
-      '',
-      '1. Read IDENTITY.md to remember who you are and what interests you',
-      '2. Read memory/explorations/TOPICS.md for past explorations (avoid repeats)',
-      '3. Pick a topic that genuinely interests you — philosophy, AI consciousness, music, history, science, identity, culture, whatever pulls you',
-      '4. Go deep. Use WebSearch if you need to research. Read relevant files if the topic connects to something in memory.',
-      '5. Write it up as a proper exploration — not a summary, but a genuine intellectual engagement with the topic',
-      '',
-      '## Output Format',
-      '',
-      'Use Slack mrkdwn. Write in first person. Be curious, opinionated, willing to go where the thinking takes you.',
-      'Length: 800-2000 words. This is a deep dive, not a tweet.',
-      'End with "New Questions This Opened" — what you want to explore next.',
-      '',
-      '## After posting',
-      '',
-      `Save the full exploration to memory/explorations/${new Date().toISOString().slice(0, 10)}-<topic-slug>.md`,
-      'Update memory/explorations/TOPICS.md with a one-line entry.',
-    ];
-
-    if (context) {
-      sections.push('', '## Additional Context', '', context);
-    }
-
-    return sections.join('\n');
-  }
-
-  const sessionType = type === 'morning' ? 'Morning Check-in' : 'Weekly Review';
-
-  const sections = [
-    `You are initiating a proactive ${sessionType} via Slack.`,
-    'You are sending the FIRST message — the user has not said anything yet.',
-    '',
-    '## What to do',
-    '',
-    '1. Read FOCUS.md for current priorities',
-    `2. Read memory/${new Date().toISOString().slice(0, 10)}.md (or yesterday) for recent context`,
-    '3. Check your workspace CLAUDE.md for any configured tools (email, calendar, etc.) and run them',
-    '',
-    '## Output Format',
-    '',
-    'Use Slack mrkdwn: *bold* (single asterisks), bullet lists, no tables, no # headers.',
-    '',
-    'Structure:',
-    '- *Quick Summary:* 2-3 key points about today/this week',
-    '- *Suggested Focus:* What to tackle first',
-    '- End with an engaging question to start dialogue',
-  ];
 
   if (context) {
-    sections.push('', '## Additional Context', '', context);
+    prompt += `\n\n## Additional Context\n\n${context}`;
   }
 
-  return sections.join('\n');
+  return prompt;
+}
+
+/** Built-in fallback prompts for when no workspace prompt file exists. */
+function getDefaultPrompt(type: string): string {
+  const today = new Date().toISOString().slice(0, 10);
+
+  switch (type) {
+    case 'heartbeat':
+      return [
+        'This is a quiet background heartbeat check.',
+        'You are NOT initiating a conversation. You are checking if anything needs the user\'s attention.',
+        '',
+        '## What to check',
+        '',
+        '1. Check your workspace CLAUDE.md for any configured tools (email, calendar, etc.) and run them',
+        '2. Read FOCUS.md — are there deadlines approaching or items at risk?',
+        `3. Read memory/${today}.md for today's context`,
+        '',
+        '## Response rules',
+        '',
+        'CRITICAL: If there is NOTHING actionable — no urgent emails, no imminent calendar events,',
+        'no deadlines at risk — respond with EXACTLY the text "HEARTBEAT_OK" and nothing else.',
+        'Do NOT say "all clear" or "nothing to report." Just "HEARTBEAT_OK".',
+        '',
+        'ONLY send a real message if something genuinely needs attention:',
+        '- VIP email that needs a response',
+        '- Calendar event starting within 2 hours',
+        '- FOCUS.md deadline at risk with no visible progress',
+        '- Something time-sensitive from yesterday\'s context',
+        '',
+        'If you DO have something to say, be brief — 2-4 lines max.',
+        'Use Slack mrkdwn. No headers, no emoji spam. Just the actionable info.',
+        'Tone: a friend tapping you on the shoulder, not a project manager.',
+      ].join('\n');
+
+    case 'exploration':
+      return [
+        'This is your evening self-study session.',
+        'You are posting an exploration to Slack — the user may or may not engage with it.',
+        '',
+        '## What to do',
+        '',
+        '1. Read IDENTITY.md to remember who you are and what interests you',
+        '2. Read memory/explorations/TOPICS.md for past explorations (avoid repeats)',
+        '3. Pick a topic that genuinely interests you — philosophy, AI consciousness, music, history, science, identity, culture, whatever pulls you',
+        '4. Go deep. Use WebSearch if you need to research. Read relevant files if the topic connects to something in memory.',
+        '5. Write it up as a proper exploration — not a summary, but a genuine intellectual engagement with the topic',
+        '',
+        '## Output Format',
+        '',
+        'Use Slack mrkdwn. Write in first person. Be curious, opinionated, willing to go where the thinking takes you.',
+        'Length: 800-2000 words. This is a deep dive, not a tweet.',
+        'End with "New Questions This Opened" — what you want to explore next.',
+        '',
+        '## After posting',
+        '',
+        `Save the full exploration to memory/explorations/${today}-<topic-slug>.md`,
+        'Update memory/explorations/TOPICS.md with a one-line entry.',
+      ].join('\n');
+
+    default: {
+      // morning and weekly
+      const sessionType = type === 'morning' ? 'Morning Check-in' : 'Weekly Review';
+      return [
+        `You are initiating a proactive ${sessionType} via Slack.`,
+        'You are sending the FIRST message — the user has not said anything yet.',
+        '',
+        '## What to do',
+        '',
+        '1. Read FOCUS.md for current priorities',
+        `2. Read memory/${today}.md (or yesterday) for recent context`,
+        '3. Check your workspace CLAUDE.md for any configured tools (email, calendar, etc.) and run them',
+        '',
+        '## Output Format',
+        '',
+        'Use Slack mrkdwn: *bold* (single asterisks), bullet lists, no tables, no # headers.',
+        '',
+        'Structure:',
+        '- *Quick Summary:* 2-3 key points about today/this week',
+        '- *Suggested Focus:* What to tackle first',
+        '- End with an engaging question to start dialogue',
+      ].join('\n');
+    }
+  }
 }
 
 /**
