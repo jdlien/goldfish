@@ -549,10 +549,26 @@ export class SlackNativeStreamer {
       if (finalMarkdown) {
         this.rawText += finalMarkdown;
         this.currentStreamText += finalMarkdown;
-        await this.streamer.stop({ markdown_text: finalMarkdown });
-      } else {
-        await this.streamer.stop();
       }
+
+      // Flush the SDK's internal buffer before stopping. Passing an empty
+      // chunks array forces the SDK to send any buffered markdown_text via
+      // appendStream. Then a short delay lets Slack's backend finish
+      // processing the append before we finalize with stopStream.
+      // Without this, stopStream can race with pending appends and the
+      // finalized message renders truncated (observed on both iOS and desktop).
+      try {
+        if (finalMarkdown) {
+          await this.streamer.append({ markdown_text: finalMarkdown, chunks: [] });
+        } else {
+          await this.streamer.append({ chunks: [] });
+        }
+      } catch {
+        // Buffer may already be empty — not critical
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      await this.streamer.stop();
       logger.debug('Native stream stopped');
     } catch (error) {
       // If the stream was already finalized by Slack (e.g. due to inactivity

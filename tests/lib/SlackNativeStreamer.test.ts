@@ -136,15 +136,18 @@ describe('SlackNativeStreamer', () => {
     expect(streamer.isStopped()).toBe(true);
   });
 
-  it('finish(text) passes final markdown to stop()', async () => {
+  it('finish(text) flushes final markdown via append then stops', async () => {
     const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
     streamer.start();
 
     await streamer.finish('Final answer');
 
-    expect(mockStreamer.stop).toHaveBeenCalledWith({
+    // Final text sent via append (to flush buffer) before stop
+    expect(mockStreamer.append).toHaveBeenCalledWith({
       markdown_text: 'Final answer',
+      chunks: [],
     });
+    expect(mockStreamer.stop).toHaveBeenCalledWith();
   });
 
   it('abort() calls stop() with error text', async () => {
@@ -174,6 +177,9 @@ describe('SlackNativeStreamer', () => {
     streamer.start();
 
     await streamer.finish();
+    // Clear the buffer-flush append from finish()
+    mockStreamer.append.mockClear();
+
     await streamer.appendText('should be ignored');
 
     expect(mockStreamer.append).not.toHaveBeenCalled();
@@ -500,9 +506,11 @@ describe('SlackNativeStreamer', () => {
       // finish() should NOT re-send a complete for t1
       await streamer.finish();
 
-      // No task_update chunks from finish — only the stop() call
+      // Only the buffer-flush append from finish(), no task_update chunks
       const appendCalls = mockStreamer.append.mock.calls;
-      expect(appendCalls.length).toBe(0);
+      expect(appendCalls.length).toBe(1);
+      // The flush call has no markdown_text, just empty chunks
+      expect(appendCalls[0][0]).toEqual({ chunks: [] });
     });
 
     it('sequential startTool calls complete the previous tool automatically', async () => {
