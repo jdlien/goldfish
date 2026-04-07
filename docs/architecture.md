@@ -142,7 +142,7 @@ At 1 AM, `scripts/daily-synthesis.sh`:
 3. Spawns `claude` with Sonnet to produce a consolidated daily narrative
 4. Writes to `memory/YYYY-MM-DD.md` (additive — doesn't overwrite what the agent already wrote)
 
-**Model choice:** Sonnet is the default — it's the quality floor for accurate memory consolidation (smaller models may editorialize, omit details, or misinterpret tone). But if you're on a Max subscription, use Opus. Synthesis runs at 1 AM when your quota is idle, and the difference in quality is real — especially for emotionally nuanced or multi-topic days. Set `model: claude-opus-4-6` on the `daily-synthesis` task in `schedule.yaml`.
+**Model choice:** Sonnet is the default — it's the quality floor for accurate memory consolidation. But if you're on a Max subscription, use Opus. Synthesis runs at 1 AM when your quota is idle, and the difference in quality is real — especially for emotionally nuanced or multi-topic days. Set `model: claude-opus-4-6` on the `daily-synthesis` task in `schedule.yaml`.
 
 ### Layer 4: FTS5 Search Index
 
@@ -176,19 +176,19 @@ The scheduler loads the config, checks which tasks are due, and fires them. Lock
 
 **Initiate tasks** spawn Claude and post results to Slack:
 
-| Type | Default Schedule | Purpose |
-|------|-----------------|---------|
-| `morning` | 8:30 AM weekdays | Morning briefing — reads FOCUS.md, checks tools, suggests priorities |
-| `heartbeat` | Hourly, work hours | Silent check; pings only on urgent items |
-| `exploration` | 6:00 PM daily | Agent picks a topic and writes a deep dive |
-| `weekly` | Sunday 9 AM | Weekly review |
+| Type          | Default Schedule   | Purpose                                                |
+| ------------- | ------------------ | ------------------------------------------------------ |
+| `morning`     | 8:30 AM weekdays   | Morning briefing — reads FOCUS.md, suggests priorities |
+| `heartbeat`   | Hourly, work hours | Silent check; pings only on urgent items               |
+| `exploration` | 6:00 PM daily      | Agent picks a topic and writes a deep dive             |
+| `weekly`      | Sunday 9 AM        | Weekly review                                          |
 
 **Maintenance tasks** run system operations (no Slack):
 
-| Type | Default Schedule | Purpose |
-|------|-----------------|---------|
-| `daily-synthesis` | 1:00 AM | Consolidate transcripts → daily log |
-| `index-memory` | 1:15 AM | Rebuild FTS5 search index |
+| Type              | Default Schedule | Purpose                             |
+| ----------------- | ---------------- | ----------------------------------- |
+| `daily-synthesis` | 1:00 AM          | Consolidate transcripts → daily log |
+| `index-memory`    | 1:15 AM          | Rebuild FTS5 search index           |
 
 All timing, channels, and models are configurable per-task. See [`scheduling.md`](scheduling.md) for the full reference.
 
@@ -196,7 +196,12 @@ All timing, channels, and models are configurable per-task. See [`scheduling.md`
 
 ## Component 4: Browser (Patchright)
 
-Goldfish includes a stealth Chromium browser via Patchright (a Playwright fork with bot-detection patches). This gives the agent access to authenticated web browsing — login once manually, and headless runs reuse the session cookies.
+Goldfish supports a stealth Chromium browser via Patchright (a Playwright fork with bot-detection patches). This gives the agent access to authenticated web browsing — login once manually, and headless runs reuse the session cookies.
+
+To install the necessary binaries, run:
+```bash
+npx patchright install chromium
+```
 
 - **Profile:** `~/Library/Application Support/goldfish/browser-profile` (persistent cookies, lockfile-serialized)
 - **CLI:** `goldfish browser login` (headful, for manual auth), `goldfish browser goto <url>` (headless)
@@ -206,14 +211,14 @@ Goldfish includes a stealth Chromium browser via Patchright (a Playwright fork w
 
 ## Cost Analysis
 
-| Component | Cost |
-|-----------|------|
-| Conversations | $0 (Claude Code on Max subscription) |
-| Daily synthesis | ~$0.10/day (Sonnet default, configurable) ≈ $3/mo |
-| Morning briefings | $0 (Max subscription) |
-| Heartbeats | $0 (Max subscription) |
-| FTS5 indexing | $0 (TypeScript, no API) |
-| **Total** | **Max subscription + ~$3-5/mo** |
+| Component         | Cost                                              |
+| ----------------- | ------------------------------------------------- |
+| Conversations     | $0 (Claude Code on Max subscription)              |
+| Daily synthesis   | ~$0.10/day (Sonnet default, configurable) ≈ $3/mo |
+| Morning briefings | $0 (Max subscription)                             |
+| Heartbeats        | $0 (Max subscription)                             |
+| FTS5 indexing     | $0 (TypeScript, no API)                           |
+| **Total**         | **Max subscription + ~$3-5/mo**                   |
 
 ---
 

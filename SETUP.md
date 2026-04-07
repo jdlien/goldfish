@@ -132,6 +132,18 @@ pnpm cli start
 
 Send a DM to your bot in Slack. You should get a response. If you see "Listening for messages..." in the terminal, it's working.
 
+## Step 6b: Browser Automation (Optional)
+
+Goldfish can drive a stealth Chromium browser via Patchright, giving your agent access to authenticated web browsing. The npm package is included, but you need to download the browser binary:
+
+```bash
+npx patchright install chromium
+```
+
+Then use `goldfish browser login` to open a headful browser and log in to any sites your agent needs access to. Session cookies persist across headless runs.
+
+Skip this step if you don't need browser automation — the core bot works fine without it.
+
 ## Step 7: Run as a Service (macOS)
 
 To keep Goldfish running in the background, use the included launchd plists.
