@@ -5,6 +5,7 @@
 Goldfish allows you to use Claude Code from Slack — but it's also much more than that. Think of it like the best parts of the OpenClaw AI assistant harness but dramatically simpler, polished for a specific use case. It's _your_ agent that knows _you_.
 
 This gives you:
+
 - **Full tool access:** Bash, file read/write, web search
 - **Thread-based sessions:** Have multiple simultaneous slack threads across different channels.
 - **Persistent memory:** Your agent can remember the most important details of your conversations over time and gets to know you personally, details about your life, and what you're working on.
@@ -14,10 +15,12 @@ This gives you:
 ## Why This Exists
 
 OpenClaw is great, but it has some issues:
+
 - It is complex to set up and keep working
 - It had many bugs in its Slack integration
 
 And crucially:
+
 - Anthropic stopped allowing SSO auth with third-party harnesses like OpenClaw, so it became enormously expensive.
 - Claude Code "just works" with a Claude Max subscription, OpenClaw had reliability issues with Claude models.
 
@@ -26,7 +29,7 @@ While OpenClaw could technically work via ACP bridges to Claude Code, there were
 If you only want to use Claude over Slack, Goldfish does 90% of what OpenClaw did (when with 10% of the complexity:
 
 | Feature            | OpenClaw                      | Goldfish                |
-| ------------------ | ----------------------------- | ------------------------|
+| ------------------ | ----------------------------- | ----------------------- |
 | Conversations      | ACP bridge (fragile)          | Claude Code CLI (solid) |
 | Session continuity | ACP session management        | `--resume` flag         |
 | Memory             | Built-in indexer + embeddings | FTS5 + cron synthesis   |
@@ -83,7 +86,7 @@ pnpm cli start
 Environment variables (in `.env`):
 
 | Variable                     | Description                                                         |
-| ---------------------------- | --------------------------------------------------------------------|
+| ---------------------------- | ------------------------------------------------------------------- |
 | `SLACK_APP_TOKEN`            | Slack Socket Mode app-level token (Required)                        |
 | `SLACK_BOT_TOKEN`            | Slack bot OAuth token (Required)                                    |
 | `GOLDFISH_WORKSPACE`         | Path to agent workspace (default: `~/goldfish-workspace`)           |
@@ -106,7 +109,7 @@ This means you can use Goldfish as:
 - A drop-in replacement for an [OpenClaw](https://openclaw.ai) agent (same workspace, simpler runtime)
 - Anything else you can define in a `CLAUDE.md`
 
-The workspace pattern — identity as markdown files, memory as a searchable archive, personality that evolves through conversation — is the core of what makes a persistent agent feel *persistent*. See [`docs/agent-identity.md`](docs/agent-identity.md) for the full design philosophy, workspace anatomy, and migration guide from OpenClaw.
+The workspace pattern — identity as markdown files, memory as a searchable archive, personality that evolves through conversation — is the core of what makes a persistent agent feel _persistent_. See [`docs/agent-identity.md`](docs/agent-identity.md) for the full design philosophy, workspace anatomy, and migration guide from OpenClaw.
 
 ## Commands
 
@@ -128,58 +131,40 @@ goldfish schedule run --dry-run         # Preview what would run
 
 ## Scheduling
 
-Instead of managing raw crontab entries, Goldfish uses a single `schedule.yaml` config file:
-
-```yaml
-tasks:
-  - name: morning
-    type: morning
-    at: "8:30am"
-    channel: C0A7FUF68PR
-
-  - name: heartbeat
-    type: heartbeat
-    every: hour
-    between: "10am-5pm"
-    days: weekdays
-    channel: C0A7FUF68PR
-
-  - name: exploration
-    type: exploration
-    at: "6pm"
-    channel: C0ANY8E67UP
-```
-
-### Schedule syntax
-
-| Field     | Examples                              | Description                        |
-| --------- | ------------------------------------- | ---------------------------------- |
-| `at`      | `"8:30"`, `"8:30am"`, `"6pm"`        | Run once a day at this time        |
-| `every`   | `"hour"`, `"2 hours"`, `"4 hours"`   | Repeating interval                 |
-| `between` | `"10am-5pm"`, `"10:00-17:00"`        | Window for `every` (optional)      |
-| `days`    | `daily`, `weekdays`, `weekends`, `monday`, `mon,wed,fri` | Which days (default: daily) |
-| `cron`    | `"0 10-17 * * 1-5"`                  | Raw cron — overrides all above     |
-| `enabled` | `true` / `false`                     | Disable without removing (default: true) |
-
-Times accept 12-hour (`8:30am`, `6pm`) or 24-hour (`18:00`) format.
-
-### Running the scheduler
-
-One cron entry drives everything:
+Goldfish uses a single `schedule.yaml` to run tasks on a schedule — briefings, heartbeats, maintenance, whatever you need. One cron entry drives all of it:
 
 ```bash
 * * * * * cd /path/to/goldfish && node dist/index.js schedule run >> /tmp/goldfish-schedule.log 2>&1
 ```
 
-Goldfish checks `schedule.yaml` each minute and fires any matching tasks. Lock files prevent overlapping runs of the same task.
+```yaml
+tasks:
+  - type: morning
+    at: "8:30am"
+    channel: C0ABC123DEF
+
+  - type: heartbeat
+    every: hour
+    between: "10am-5pm"
+    days: weekdays
+    channel: C0ABC123DEF
+
+  - type: daily-synthesis
+    at: "1:00am"
+
+  - type: index-memory
+    at: "1:15am"
+```
+
+See [`docs/scheduling.md`](docs/scheduling.md) for the full reference — all fields, task types, timing syntax, locking, and configuration options.
 
 ## Memory System
 
 Goldfish maintains memory through three layers:
 
-1. **In-session** — The agent writes to memory files during conversations (daily notes, project files, etc.)
-2. **Post-session transcripts** — Every message exchange is appended to `memory/sessions/YYYY-MM-DD.jsonl`
-3. **Daily synthesis** — A cron job uses Sonnet to consolidate the day's transcripts into a narrative daily log
+1. **In-session:** The agent writes to memory files during conversations (daily notes, project files, etc.)
+2. **Post-session transcripts:** Every message exchange is appended to `memory/sessions/YYYY-MM-DD.jsonl`
+3. **Daily synthesis:** A cron job to consolidate the day's transcripts into a narrative daily log
 
 Search memory from within a Claude session:
 
@@ -192,7 +177,7 @@ sqlite3 memory/search.sqlite \
 
 ## The Name
 
-Goldfish are commonly thought to have 3-second memories. [That's actually a myth](https://www.sciencing.com/1881847/myth-goldfish-memories-you-believe/) — they can remember for months. Same idea here: a system with no built-in persistent memory that compensates by writing everything down obsessively.
+Goldfish are commonly thought to have 3-second memories. [It turns out that's a myth](https://www.sciencing.com/1881847/myth-goldfish-memories-you-believe/) — they can remember for months. But an LLM-based AI-agent is kind of like that. Almost no short-term memory, but we create a long-term memory by writing everything down obsessively.
 
 ## License
 

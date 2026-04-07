@@ -13,71 +13,13 @@ Goldfish has two runtime components:
 
 ### The scheduler (`schedule.yaml`)
 
-Instead of managing individual launchd plists for each scheduled task, Goldfish
-uses a single config file — the same pattern as Laravel's `schedule:run` but with subcommand syntax (`schedule run`):
-
-```yaml
-# schedule.yaml
-tasks:
-  - name: morning
-    type: morning
-    at: "8:30am"
-    channel: C0A7FUF68PR
-
-  - name: heartbeat
-    type: heartbeat
-    every: hour
-    between: "10am-5pm"
-    days: weekdays
-    channel: C0A7FUF68PR
-
-  - name: exploration
-    type: exploration
-    at: "6pm"
-    channel: C0ANY8E67UP
-
-  - name: weekly
-    type: weekly
-    at: "9am"
-    days: sunday
-    channel: C0A7FUF68PR
-```
-
-One cron entry drives all of it:
+All scheduled tasks — proactive Slack messages and nightly maintenance — are defined in `schedule.yaml` and driven by a single cron entry:
 
 ```
 * * * * * cd ~/code/goldfish && node dist/index.js schedule run >> /tmp/goldfish-schedule.log 2>&1
 ```
 
-Goldfish checks the config each minute and fires any matching tasks. Lock files
-prevent overlapping runs of the same task.
-
-#### Schedule syntax
-
-| Field     | Example                          | Description                        |
-|-----------|----------------------------------|------------------------------------|
-| `at`      | `"8:30"`, `"8:30am"`, `"6pm"`   | Once a day at this time            |
-| `every`   | `"hour"`, `"2 hours"`           | Repeating interval                 |
-| `between` | `"10am-5pm"`, `"10:00-17:00"`   | Window constraint for `every`      |
-| `days`    | `weekdays`, `weekends`, `monday`, `mon,wed,fri` | Which days to run |
-| `cron`    | `"0 10-17 * * 1-5"`             | Raw cron — overrides all above     |
-
-Times accept both 12-hour (`8:30am`, `6pm`) and 24-hour (`18:00`) formats.
-`days` defaults to `daily` if omitted. `cron` is an escape hatch for anything
-the human-readable syntax can't express.
-
-Optional fields per task:
-- `enabled: false` — disable a task without removing it
-- `context: "..."` — extra context passed to the Claude prompt
-- `channel` — which Slack channel to post to
-
-#### Managing the schedule
-
-```bash
-goldfish schedule list              # Show all tasks and their cron expressions
-goldfish schedule run               # Run any tasks due now
-goldfish schedule run --dry-run     # Preview what would run
-```
+See [`scheduling.md`](scheduling.md) for the full reference (task types, timing syntax, all fields, locking behavior).
 
 ### Legacy: individual launchd plists
 
