@@ -41,3 +41,15 @@ tasks:
   #   at: "9am"
   #   days: sunday
   #   channel: YOUR_CHANNEL_ID
+
+  # Maintenance tasks — no channel needed
+  # These run system tasks instead of posting to Slack.
+
+  - name: daily-synthesis
+    type: daily-synthesis
+    at: "1:00am"
+    # model: claude-opus-4-6   # optional model override (default: claude-sonnet-4-6)
+
+  - name: index-memory
+    type: index-memory
+    at: "1:15am"

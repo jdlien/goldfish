@@ -475,7 +475,7 @@ tasks:
     expect(() => loadSchedule(path)).toThrow('needs a "type"');
   });
 
-  it('rejects task with no channel', () => {
+  it('rejects initiate task with no channel', () => {
     const path = writeYaml('bad.yaml', `
 tasks:
   - name: test
@@ -483,6 +483,18 @@ tasks:
     at: "8:30"
 `);
     expect(() => loadSchedule(path)).toThrow('needs a "channel"');
+  });
+
+  it('accepts maintenance task without channel', () => {
+    const path = writeYaml('ok.yaml', `
+tasks:
+  - name: nightly-index
+    type: index-memory
+    at: "1:15am"
+`);
+    const config = loadSchedule(path);
+    expect(config.tasks).toHaveLength(1);
+    expect(config.tasks[0].type).toBe('index-memory');
   });
 
   it('rejects task with no timing fields', () => {

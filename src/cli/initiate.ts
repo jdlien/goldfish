@@ -22,6 +22,7 @@ export interface InitiateOptions {
   context?: string;
   reminder?: string;
   dryRun?: boolean;
+  model?: string;
 }
 
 /**
@@ -223,6 +224,7 @@ export async function initiate(options: InitiateOptions): Promise<void> {
     const claudeResult = await claudeRunner.run({
       prompt,
       maxTurns: 15,
+      model: options.model,
     });
 
     if (!claudeResult.ok) {

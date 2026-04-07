@@ -12,8 +12,9 @@
 import chalk from 'chalk';
 import { join } from 'path';
 import { existsSync, writeFileSync, readFileSync, unlinkSync } from 'fs';
-import { loadSchedule, toCron, cronMatchesNow, type ScheduleTask } from '../lib/scheduleParser.js';
+import { loadSchedule, toCron, cronMatchesNow, INITIATE_TYPES, type ScheduleTask, type InitiateTaskType } from '../lib/scheduleParser.js';
 import { initiate } from './initiate.js';
+import { runMaintenanceTask } from './maintenance.js';
 import { createChildLogger } from '../lib/logger.js';
 
 const logger = createChildLogger('cli:schedule');
@@ -137,11 +138,16 @@ export async function scheduleRun(options: ScheduleRunOptions): Promise<void> {
     }
 
     try {
-      await initiate({
-        type: task.type,
-        channel: task.channel,
-        context: task.context,
-      });
+      if (INITIATE_TYPES.includes(task.type)) {
+        await initiate({
+          type: task.type as InitiateTaskType,
+          channel: task.channel!,
+          context: task.context,
+          model: task.model,
+        });
+      } else {
+        await runMaintenanceTask(task);
+      }
     } catch (err) {
       logger.error({ task: task.name, error: err }, 'Scheduled task failed');
       console.error(chalk.red(`✗ ${task.name} failed:`), err);

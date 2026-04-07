@@ -14,10 +14,18 @@
 import { parse as parseYaml } from 'yaml';
 import { readFileSync } from 'fs';
 
+export type InitiateTaskType = 'morning' | 'weekly' | 'exploration' | 'heartbeat';
+export type MaintenanceTaskType = 'daily-synthesis' | 'index-memory';
+export type TaskType = InitiateTaskType | MaintenanceTaskType;
+
+export const INITIATE_TYPES: readonly string[] = ['morning', 'weekly', 'exploration', 'heartbeat'];
+export const MAINTENANCE_TYPES: readonly string[] = ['daily-synthesis', 'index-memory'];
+
 export interface ScheduleTask {
   name: string;
-  type: 'morning' | 'weekly' | 'exploration' | 'heartbeat';
-  channel: string;
+  type: TaskType;
+  /** Slack channel — required for initiate tasks, ignored for maintenance tasks */
+  channel?: string;
   /** Time of day: "8:30", "8:30am", "6pm", "18:00" */
   at?: string;
   /** Repeating interval: "hour", "2 hours", "4 hours" */
@@ -32,6 +40,8 @@ export interface ScheduleTask {
   context?: string;
   /** Whether this task is active (default: true) */
   enabled?: boolean;
+  /** Model override for this task (e.g. "claude-opus-4-6", "claude-sonnet-4-6") */
+  model?: string;
 }
 
 export interface ScheduleConfig {
@@ -188,7 +198,9 @@ export function loadSchedule(path: string): ScheduleConfig {
   for (const task of parsed.tasks) {
     if (!task.name) throw new Error('Each task needs a "name".');
     if (!task.type) throw new Error(`Task "${task.name}" needs a "type".`);
-    if (!task.channel) throw new Error(`Task "${task.name}" needs a "channel".`);
+    if (INITIATE_TYPES.includes(task.type) && !task.channel) {
+      throw new Error(`Task "${task.name}" (type: ${task.type}) needs a "channel".`);
+    }
     // Validate that the cron expression can be generated
     toCron(task);
   }

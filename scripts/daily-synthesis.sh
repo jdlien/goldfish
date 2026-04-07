@@ -1,12 +1,15 @@
 #!/bin/bash
 # Daily memory synthesis — consolidates session transcripts into a narrative daily log.
-# Cron: 0 1 * * * /path/to/goldfish/scripts/daily-synthesis.sh
+# Called by the schedule runner (schedule.yaml) or manually.
 #
-# Sonnet is recommended as the minimum quality model for this task.
+# Environment variables:
+#   GOLDFISH_WORKSPACE         — workspace path (default: ~/goldfish-workspace)
+#   GOLDFISH_SYNTHESIS_MODEL   — Claude model to use (default: claude-sonnet-4-6)
 
 set -euo pipefail
 
 WORKSPACE="${GOLDFISH_WORKSPACE:-$HOME/goldfish-workspace}"
+MODEL="${GOLDFISH_SYNTHESIS_MODEL:-claude-sonnet-4-6}"
 DATE=$(date -d "yesterday" +%Y-%m-%d 2>/dev/null || date -v-1d +%Y-%m-%d)
 SESSION_LOG="${WORKSPACE}/memory/sessions/${DATE}.jsonl"
 DAILY_FILE="${WORKSPACE}/memory/${DATE}.md"
@@ -50,7 +53,7 @@ PROMPT_EOF
 
 # Use Sonnet for synthesis
 claude -p "$PROMPT" \
-  --model claude-sonnet-4-6 \
+  --model "$MODEL" \
   --max-turns 3 \
   --dangerously-skip-permissions \
   --output-format text \
