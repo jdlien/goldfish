@@ -58,6 +58,9 @@ pnpm install
 # Copy .env and fill in Slack tokens
 cp .env.example .env
 
+# Create an agent workspace (interactive — sets up identity, memory, prompts, schedule)
+pnpm run cli init
+
 # Test connection
 pnpm run cli auth test
 
@@ -69,17 +72,17 @@ pnpm run cli start
 
 Environment variables (in `.env`):
 
-| Variable                     | Required | Description                                                               |
-| ---------------------------- | -------- | ------------------------------------------------------------------------- |
-| `SLACK_APP_TOKEN`            | Yes      | Slack Socket Mode app-level token                                         |
-| `SLACK_BOT_TOKEN`            | Yes      | Slack bot OAuth token                                                     |
-| `GOLDFISH_WORKSPACE`         | No       | Path to agent workspace (default: `~/goldfish-workspace`) |
-| `GOLDFISH_CHANNELS`          | No       | Comma-separated Slack channel IDs to listen on (in addition to DMs)       |
-| `GOLDFISH_DM_CHANNEL_ID`     | No       | Default DM channel for proactive outreach                                 |
-| `GOLDFISH_MAX_TURNS`         | No       | Max Claude Code turns per message (default: 50)                           |
-| `GOLDFISH_TIMEOUT_MS`        | No       | Claude Code timeout in ms (default: 300000)                               |
-| `GOLDFISH_SESSION_EXPIRY_MS` | No       | Session expiry in ms (default: 86400000 / 24h)                            |
-| `GOLDFISH_SHOW_THINKING`     | No       | Show "Thinking..." indicator (default: true)                              |
+| Variable                     | Description                                                         |
+| ---------------------------- | --------------------------------------------------------------------|
+| `SLACK_APP_TOKEN`            | Slack Socket Mode app-level token (Required)                        |
+| `SLACK_BOT_TOKEN`            | Slack bot OAuth token (Required)                                    |
+| `GOLDFISH_WORKSPACE`         | Path to agent workspace (default: `~/goldfish-workspace`)           |
+| `GOLDFISH_CHANNELS`          | Comma-separated Slack channel IDs to listen on (in addition to DMs) |
+| `GOLDFISH_DM_CHANNEL_ID`     | Default DM channel for proactive outreach                           |
+| `GOLDFISH_MAX_TURNS`         | Max Claude Code turns per message (default: 50)                     |
+| `GOLDFISH_TIMEOUT_MS`        | Claude Code timeout in ms (default: 300000)                         |
+| `GOLDFISH_SESSION_EXPIRY_MS` | Session expiry in ms (default: 86400000 / 24h)                      |
+| `GOLDFISH_SHOW_THINKING`     | Show "Thinking..." indicator (default: true)                        |
 
 ## Agent Identity
 
