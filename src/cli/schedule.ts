@@ -29,7 +29,7 @@ export interface ScheduleListOptions {
 }
 
 const LOCK_DIR = join(process.cwd(), '.schedule-locks');
-const LOCK_STALE_MS = 10 * 60 * 1000; // 10 minutes — assume stale after this
+const LOCK_STALE_MS = 20 * 60 * 1000; // 20 minutes — must exceed longest task timeout (15 min for synthesis)
 
 /**
  * Check if a task is currently locked (running).

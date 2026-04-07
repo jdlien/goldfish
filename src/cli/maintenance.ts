@@ -51,7 +51,7 @@ async function runDailySynthesis(task: ScheduleTask): Promise<void> {
     const output = execFileSync('bash', [scriptPath], {
       env,
       encoding: 'utf-8',
-      timeout: 5 * 60 * 1000, // 5 minute timeout
+      timeout: 15 * 60 * 1000, // 15 minute timeout
     });
 
     console.log(chalk.dim(output.trim()));

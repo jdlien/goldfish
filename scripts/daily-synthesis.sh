@@ -10,6 +10,7 @@ set -euo pipefail
 
 WORKSPACE="${GOLDFISH_WORKSPACE:-$HOME/goldfish-workspace}"
 MODEL="${GOLDFISH_SYNTHESIS_MODEL:-claude-sonnet-4-6}"
+MAX_INPUT_KB="${GOLDFISH_SYNTHESIS_MAX_KB:-200}"
 DATE=$(date -d "yesterday" +%Y-%m-%d 2>/dev/null || date -v-1d +%Y-%m-%d)
 SESSION_LOG="${WORKSPACE}/memory/sessions/${DATE}.jsonl"
 DAILY_FILE="${WORKSPACE}/memory/${DATE}.md"
@@ -28,18 +29,31 @@ if [ -f "$DAILY_FILE" ]; then
   EXISTING_CONTENT=$(cat "$DAILY_FILE")
 fi
 
+# Truncate large session logs to avoid prompt/timeout issues.
+# Default 200KB ≈ 50-60K tokens — plenty for a thorough synthesis.
+SESSION_SIZE_KB=$(( $(wc -c < "$SESSION_LOG") / 1024 ))
+if [ "$SESSION_SIZE_KB" -gt "$MAX_INPUT_KB" ]; then
+  SESSION_DATA=$(tail -c "${MAX_INPUT_KB}k" "$SESSION_LOG")
+  TRUNCATION_NOTE="(Transcript truncated: ${SESSION_SIZE_KB}KB total, showing last ${MAX_INPUT_KB}KB. Earlier conversations were omitted.)"
+  echo "Warning: session log is ${SESSION_SIZE_KB}KB, truncating to last ${MAX_INPUT_KB}KB"
+else
+  SESSION_DATA=$(cat "$SESSION_LOG")
+  TRUNCATION_NOTE=""
+fi
+
 # Build the synthesis prompt
 PROMPT=$(cat <<PROMPT_EOF
 Synthesize the day's conversations into a daily memory log.
 
 Date: ${DATE}
 Sessions today: ${SESSION_COUNT}
+${TRUNCATION_NOTE}
 
 ## Existing daily notes (written during sessions):
 ${EXISTING_CONTENT:-"(none)"}
 
 ## Session transcripts:
-$(cat "$SESSION_LOG")
+${SESSION_DATA}
 
 ## Instructions:
 Write a daily log for ${DATE} in the style of existing daily files in memory/.
