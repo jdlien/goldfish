@@ -608,6 +608,8 @@ export async function start(): Promise<void> {
       console.log(`  Channels:  ${chalk.bold(listenChannels.join(', '))}`);
     }
     console.log('');
+    console.log(`  Send a DM to ${chalk.bold(authInfo.value.botName)} in Slack to say hello!`);
+    console.log('');
     console.log(chalk.dim('Listening for messages... (Ctrl+C to stop)'));
   }
 
