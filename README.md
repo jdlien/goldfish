@@ -1,6 +1,8 @@
-# Goldfish
+<p align="center">
+  <img src="assets/goldfish-logo.webp" alt="Goldfish" width="450">
+</p>
 
-**AI agent runtime — a Claude Code-native Slack bot with persistent memory.**
+<p align="center"><strong>AI agent runtime — a Claude Code-native Slack bot with persistent memory.</strong></p>
 
 Goldfish allows you to use Claude Code from Slack — but it's also much more than that. Think of it like the best parts of the OpenClaw AI assistant harness but dramatically simpler, polished for a specific use case. It's _your_ agent that knows _you_.
 
