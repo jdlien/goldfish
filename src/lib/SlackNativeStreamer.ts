@@ -30,6 +30,15 @@ const MAX_TOOL_OUTPUT_CHARS = 400;
  */
 const ROLLOVER_THRESHOLD_BYTES = 8000;
 
+/**
+ * Start looking for a natural break point this many bytes before the
+ * hard rollover threshold. Text arriving in the "soft zone" (between
+ * SOFT and HARD thresholds) gets buffered until a newline appears,
+ * then everything up to the newline is flushed and we roll over.
+ * If the hard threshold is reached with no newline, force rollover.
+ */
+const ROLLOVER_SOFT_THRESHOLD_BYTES = 6500;
+
 const TOOL_LABELS: Record<string, string> = {
   Read: 'Reading file',
   Bash: 'Running command',
@@ -87,6 +96,11 @@ export class SlackNativeStreamer {
   private currentStreamText = '';
   /** Message ts of the current stream (captured from first append response). */
   private currentStreamTs: string | null = null;
+  /**
+   * When true, we've passed the soft threshold and are buffering text
+   * waiting for a newline to split on before rolling over.
+   */
+  private seekingBreak = false;
   /**
    * Tool IDs currently shown as "in_progress" in the task timeline.
    * Maps toolId → title, so we can emit matching "complete" chunks when
@@ -162,62 +176,71 @@ export class SlackNativeStreamer {
       await this.flushPendingToolsAsComplete();
     }
 
-    // Proactive rollover: if adding this chunk would push us over
-    // the safe threshold, split at a natural break point so the
-    // message boundary falls on a paragraph or line break.
-    if (this.bytesInCurrentStream + markdown.length > ROLLOVER_THRESHOLD_BYTES) {
-      const { before, after } = splitAtBreak(markdown);
+    // Soft threshold: start looking for a natural break point.
+    // Text deltas from Claude are tiny (a few words each), so we can't
+    // rely on finding a newline in the single chunk that crosses the
+    // hard threshold. Instead, once we enter the "soft zone" (between
+    // SOFT and HARD thresholds), check every incoming chunk for a newline.
+    // When one arrives, flush everything up to the newline on the current
+    // stream, roll over, and send the rest on the new stream.
+    const projectedSize = this.bytesInCurrentStream + markdown.length;
 
-      // Accumulate the full original chunk for transcript fidelity
-      this.rawText += markdown;
+    if (this.seekingBreak || projectedSize > ROLLOVER_SOFT_THRESHOLD_BYTES) {
+      this.seekingBreak = true;
 
-      if (before) {
-        // Send the portion before the break on the current stream
-        this.currentStreamText += before;
-        try {
-          await this.streamer!.append({ markdown_text: before });
-          this.bytesInCurrentStream += before.length;
-          this.confirmedSentBytes += before.length;
-        } catch (error) {
-          // If even this partial send fails, fall through to the
-          // normal error handling below with the full chunk
+      // Look for a break in this chunk
+      const paraIdx = markdown.lastIndexOf('\n\n');
+      const lineIdx = markdown.lastIndexOf('\n');
+      const breakIdx = paraIdx > 0 ? paraIdx : lineIdx > 0 ? lineIdx : -1;
+      const breakLen = paraIdx > 0 ? 2 : 1; // \n\n vs \n
+
+      if (breakIdx > 0) {
+        // Found a break — split here
+        const before = markdown.slice(0, breakIdx);
+        const after = markdown.slice(breakIdx + breakLen);
+
+        this.rawText += markdown;
+
+        // Send the part before the break on the current stream
+        if (before) {
+          this.currentStreamText += before;
+          try {
+            await this.streamer!.append({ markdown_text: before });
+            this.bytesInCurrentStream += before.length;
+            this.confirmedSentBytes += before.length;
+          } catch {
+            // Partial send failed — will be handled by rollover
+          }
         }
-      }
+        // Credit separator bytes
+        this.confirmedSentBytes += breakLen;
 
-      await this.rollover();
+        await this.rollover();
+        this.seekingBreak = false;
 
-      // Continue with the remainder (or the full chunk if no break found)
-      const remainder = before ? after : markdown;
-      // Separator bytes (\n\n or \n) stripped by splitAtBreak
-      const separatorBytes = before ? markdown.length - before.length - after.length : 0;
-      if (remainder) {
-        this.currentStreamText += remainder;
-        try {
-          await this.streamer!.append({ markdown_text: remainder });
-          this.bytesInCurrentStream += remainder.length;
-          this.confirmedSentBytes += remainder.length + separatorBytes;
-        } catch (error) {
-          if (isRecoverableStreamError(error) && !this.stopped) {
-            logger.warn(
-              { bytesInCurrentStream: this.bytesInCurrentStream },
-              'Stream hit recoverable error after smart rollover; rolling over again',
-            );
-            await this.rollover();
-            try {
-              await this.streamer!.append({ markdown_text: remainder });
-              this.bytesInCurrentStream += remainder.length;
-              this.confirmedSentBytes += remainder.length + separatorBytes;
-            } catch (retryError) {
-              logger.error({ error: retryError }, 'Append failed again after rollover; giving up');
-              throw retryError;
-            }
-          } else {
+        // Send the part after the break on the new stream
+        if (after) {
+          this.currentStreamText += after;
+          try {
+            await this.streamer!.append({ markdown_text: after });
+            this.bytesInCurrentStream += after.length;
+            this.confirmedSentBytes += after.length;
+          } catch (error) {
             logger.error({ error }, 'Failed to append remainder after smart rollover');
             throw error;
           }
         }
+        return;
       }
-      return;
+
+      // No break found in this chunk. If we've hit the hard threshold,
+      // force rollover (can't wait any longer or Slack will reject).
+      if (projectedSize > ROLLOVER_THRESHOLD_BYTES) {
+        await this.rollover();
+        this.seekingBreak = false;
+        // Fall through to normal append on the new stream
+      }
+      // Otherwise keep seeking — append normally and wait for next chunk
     }
 
     this.rawText += markdown;
@@ -319,6 +342,7 @@ export class SlackNativeStreamer {
     this.bytesInCurrentStream = 0;
     this.currentStreamText = '';
     this.currentStreamTs = null;
+    this.seekingBreak = false;
 
     // Re-emit in_progress for any carried-over tools on the new stream.
     // pendingTools stays populated (the tools are still running), so a

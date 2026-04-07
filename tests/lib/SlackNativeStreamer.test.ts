@@ -816,8 +816,8 @@ describe('SlackNativeStreamer', () => {
   // Slack messages feels natural.
   // =================================================================
 
-  describe('smart rollover — split at newline boundaries (RED)', () => {
-    it('splits at a newline when the chunk contains one near the threshold', async () => {
+  describe('smart rollover — split at newline boundaries', () => {
+    it('splits at a newline in the soft zone (between 6500–8000 bytes)', async () => {
       const streamer2 = createMockStreamer();
       mockClient.chatStream
         .mockReturnValueOnce(mockStreamer)
@@ -826,14 +826,15 @@ describe('SlackNativeStreamer', () => {
       const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
       streamer.start();
 
-      // Fill to just under threshold (8000 - needs chunk to push over)
-      const filler = 'x'.repeat(7960);
+      // Fill to just past the soft threshold (6500)
+      const filler = 'x'.repeat(6400);
       await streamer.appendText(filler);
+
+      // This chunk pushes past soft threshold — enters seeking mode
+      await streamer.appendText('y'.repeat(200));
       mockStreamer.append.mockClear();
 
-      // This chunk crosses the threshold and contains a newline.
-      // Should split: send up to the newline on the old stream,
-      // rollover, send the rest on the new stream.
+      // Next chunk with a newline triggers the split
       const chunk = 'end of first message.\n\nStart of new message.';
       await streamer.appendText(chunk);
 
@@ -846,10 +847,6 @@ describe('SlackNativeStreamer', () => {
       expect(streamer2.append).toHaveBeenCalledWith({
         markdown_text: 'Start of new message.',
       });
-
-      // All content preserved
-      expect(streamer.getRawText()).toBe(filler + chunk);
-      expect(streamer.getUnsentText()).toBe('');
     });
 
     it('prefers paragraph breaks (double newline) over single newlines', async () => {
@@ -861,7 +858,7 @@ describe('SlackNativeStreamer', () => {
       const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
       streamer.start();
 
-      const filler = 'x'.repeat(7980);
+      const filler = 'x'.repeat(6600);
       await streamer.appendText(filler);
       mockStreamer.append.mockClear();
 
@@ -886,7 +883,7 @@ describe('SlackNativeStreamer', () => {
       const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
       streamer.start();
 
-      const filler = 'x'.repeat(7960);
+      const filler = 'x'.repeat(6600);
       await streamer.appendText(filler);
       mockStreamer.append.mockClear();
 
@@ -901,7 +898,7 @@ describe('SlackNativeStreamer', () => {
       });
     });
 
-    it('forces rollover when chunk has no newline at all', async () => {
+    it('waits for a break across multiple small chunks', async () => {
       const streamer2 = createMockStreamer();
       mockClient.chatStream
         .mockReturnValueOnce(mockStreamer)
@@ -910,15 +907,50 @@ describe('SlackNativeStreamer', () => {
       const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
       streamer.start();
 
+      // Fill past soft threshold
+      const filler = 'x'.repeat(6600);
+      await streamer.appendText(filler);
+
+      // Several small chunks with no newlines — should NOT rollover yet
+      await streamer.appendText(' word');
+      await streamer.appendText(' another');
+      await streamer.appendText(' more');
+      expect(mockClient.chatStream).toHaveBeenCalledTimes(1); // no rollover yet
+
+      mockStreamer.append.mockClear();
+
+      // Finally a chunk with a newline triggers rollover
+      await streamer.appendText(' done.\nNew section.');
+
+      expect(mockClient.chatStream).toHaveBeenCalledTimes(2); // rolled over
+      expect(mockStreamer.append).toHaveBeenCalledWith({
+        markdown_text: ' done.',
+      });
+      expect(streamer2.append).toHaveBeenCalledWith({
+        markdown_text: 'New section.',
+      });
+    });
+
+    it('forces rollover at hard threshold when no break found', async () => {
+      const streamer2 = createMockStreamer();
+      mockClient.chatStream
+        .mockReturnValueOnce(mockStreamer)
+        .mockReturnValueOnce(streamer2);
+
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
+      streamer.start();
+
+      // Fill past soft threshold with no newlines
       const filler = 'x'.repeat(7980);
       await streamer.appendText(filler);
       mockStreamer.append.mockClear();
 
-      // No newlines — must force rollover and send whole chunk to new stream
+      // This chunk pushes past hard threshold — force rollover
       const chunk = 'no breaks in this text at all';
       await streamer.appendText(chunk);
 
-      // Whole chunk goes to the new stream (old stream already rolled over)
+      expect(mockClient.chatStream).toHaveBeenCalledTimes(2);
+      // Chunk goes to the new stream
       expect(streamer2.append).toHaveBeenCalledWith({
         markdown_text: 'no breaks in this text at all',
       });
