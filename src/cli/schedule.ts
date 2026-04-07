@@ -11,7 +11,7 @@
 
 import chalk from 'chalk';
 import { join } from 'path';
-import { existsSync, writeFileSync, readFileSync, unlinkSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, unlinkSync } from 'fs';
 import { loadSchedule, toCron, cronMatchesNow, INITIATE_TYPES, type ScheduleTask, type InitiateTaskType } from '../lib/scheduleParser.js';
 import { initiate } from './initiate.js';
 import { runMaintenanceTask } from './maintenance.js';
@@ -59,7 +59,6 @@ function isLocked(taskName: string): boolean {
  * Acquire a lock for a task. Returns true if acquired.
  */
 function acquireLock(taskName: string): boolean {
-  const { mkdirSync } = require('fs');
   try { mkdirSync(LOCK_DIR, { recursive: true }); } catch { /* exists */ }
 
   const lockFile = join(LOCK_DIR, `${taskName}.lock`);
