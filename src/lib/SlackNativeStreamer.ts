@@ -546,33 +546,13 @@ export class SlackNativeStreamer {
 
     this.stopped = true;
     try {
-      let stopResponse: any;
       if (finalMarkdown) {
         this.rawText += finalMarkdown;
         this.currentStreamText += finalMarkdown;
-        stopResponse = await this.streamer.stop({ markdown_text: finalMarkdown });
+        await this.streamer.stop({ markdown_text: finalMarkdown });
       } else {
-        stopResponse = await this.streamer.stop();
+        await this.streamer.stop();
       }
-
-      // Workaround for Slack iOS rendering bug: after stopStream, the
-      // mobile client sometimes re-renders the message truncated. A
-      // follow-up chat.update with the full text forces a correct render.
-      const messageTs = stopResponse?.ts;
-      if (messageTs && this.currentStreamText) {
-        try {
-          await this.webClient.chat.update({
-            channel: this.channel,
-            ts: messageTs,
-            text: this.currentStreamText,
-          });
-          logger.debug({ messageTs }, 'Post-stop chat.update sent to solidify message');
-        } catch (updateError) {
-          // Non-critical — the streamed content may still be visible
-          logger.warn({ error: updateError }, 'Post-stop chat.update failed (message may render truncated on mobile)');
-        }
-      }
-
       logger.debug('Native stream stopped');
     } catch (error) {
       // If the stream was already finalized by Slack (e.g. due to inactivity
