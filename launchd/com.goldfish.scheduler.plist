@@ -12,11 +12,6 @@
         <string>source ~/code/goldfish/launchd/goldfish-env.sh &amp;&amp; cd ~/code/goldfish &amp;&amp; node dist/index.js schedule run</string>
     </array>
 
-    <!-- SETUP: Replace with the absolute path to your goldfish repo.
-         launchd cannot expand ~ or $HOME here — use a full path. -->
-    <key>WorkingDirectory</key>
-    <string>/Users/YOURUSERNAME/code/goldfish</string>
-
     <key>StartInterval</key>
     <integer>60</integer>
 

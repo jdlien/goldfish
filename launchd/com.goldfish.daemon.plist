@@ -12,11 +12,6 @@
         <string>source ~/code/goldfish/launchd/goldfish-env.sh &amp;&amp; cd ~/code/goldfish &amp;&amp; exec node dist/index.js start</string>
     </array>
 
-    <!-- SETUP: Replace with the absolute path to your goldfish repo.
-         launchd cannot expand ~ or $HOME here — use a full path. -->
-    <key>WorkingDirectory</key>
-    <string>/Users/YOURUSERNAME/code/goldfish</string>
-
     <key>RunAtLoad</key>
     <true/>
 
