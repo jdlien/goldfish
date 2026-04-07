@@ -123,6 +123,10 @@ export class SlackNativeStreamer {
     this.streamer = this.webClient.chatStream({
       channel: this.channel,
       thread_ts: this.threadTs,
+      // Larger buffer reduces the chance of Slack's renderer eating
+      // newlines that fall on a flush boundary. Default is 256; 1024
+      // means fewer, larger API calls — still well under rate limits.
+      buffer_size: 1024,
       ...(this.recipientTeamId ? { recipient_team_id: this.recipientTeamId } : {}),
       ...(this.recipientUserId ? { recipient_user_id: this.recipientUserId } : {}),
     });
@@ -301,6 +305,7 @@ export class SlackNativeStreamer {
     this.streamer = this.webClient.chatStream({
       channel: this.channel,
       thread_ts: this.threadTs,
+      buffer_size: 1024,
       ...(this.recipientTeamId ? { recipient_team_id: this.recipientTeamId } : {}),
       ...(this.recipientUserId ? { recipient_user_id: this.recipientUserId } : {}),
     });

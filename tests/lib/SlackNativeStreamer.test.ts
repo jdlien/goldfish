@@ -46,6 +46,7 @@ describe('SlackNativeStreamer', () => {
     expect(mockClient.chatStream).toHaveBeenCalledWith({
       channel: 'C123',
       thread_ts: '1234567890.123456',
+      buffer_size: 1024,
     });
   });
 
@@ -62,6 +63,7 @@ describe('SlackNativeStreamer', () => {
     expect(mockClient.chatStream).toHaveBeenCalledWith({
       channel: 'C123',
       thread_ts: '1234567890.123456',
+      buffer_size: 1024,
       recipient_team_id: 'T456',
       recipient_user_id: 'U789',
     });
