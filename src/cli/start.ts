@@ -36,6 +36,10 @@ const logger = createChildLogger('cli:start');
 let isShuttingDown = false;
 let slackClient: SlackBoltClient | null = null;
 
+// Per-session concurrency lock: serializes Claude invocations so two messages
+// in the same thread don't spawn competing processes on the same session.
+const sessionLocks = new Map<string, Promise<void>>();
+
 /**
  * Start the Goldfish bot
  */
@@ -139,19 +143,58 @@ export async function start(): Promise<void> {
       'Received message',
     );
 
-    // Show a native "is thinking..." indicator immediately — this fires
-    // before session lookup, file downloads, or Claude spawn, so the user
-    // gets instant feedback. Slack auto-clears it when the stream starts.
-    // Fire-and-forget: if the app isn't configured for assistant threads,
-    // this degrades silently without blocking the main flow.
+    // --- Per-session concurrency lock ---
+    // If a Claude process is already running for this thread, queue the
+    // new message behind it so they don't fight over the same session.
+    const lockKey = `${channelId}:${sessionKey}`;
+    const isQueued = sessionLocks.has(lockKey);
+
+    // Show "Queued..." if another message is already being processed,
+    // otherwise show the normal "is thinking..." indicator.
     const statusThreadTs = msg.thread_ts ?? msg.ts;
-    void slackClient!.getWebClient().assistant.threads.setStatus({
-      channel_id: channelId,
-      thread_ts: statusThreadTs,
-      status: 'is thinking...',
-    }).catch((error) => {
-      logger.debug({ error }, 'assistant.threads.setStatus failed (non-fatal)');
-    });
+    let queuedMsgTs: string | null = null;
+    if (isQueued) {
+      logger.info({ lockKey }, 'Session busy — queuing message');
+      const queuedResult = await slackClient!.sendMessage({
+        channel: channelId,
+        text: '⏳ Queued...',
+        threadTs: replyThreadTs,
+      }).catch((error) => {
+        logger.debug({ error }, 'Failed to post queued indicator (non-fatal)');
+        return null;
+      });
+      if (queuedResult && queuedResult.ok) {
+        queuedMsgTs = queuedResult.value;
+      }
+    } else {
+      // Show a native "is thinking..." indicator immediately — this fires
+      // before session lookup, file downloads, or Claude spawn, so the user
+      // gets instant feedback. Slack auto-clears it when the stream starts.
+      // Fire-and-forget: if the app isn't configured for assistant threads,
+      // this degrades silently without blocking the main flow.
+      void slackClient!.getWebClient().assistant.threads.setStatus({
+        channel_id: channelId,
+        thread_ts: statusThreadTs,
+        status: 'is thinking...',
+      }).catch((error) => {
+        logger.debug({ error }, 'assistant.threads.setStatus failed (non-fatal)');
+      });
+    }
+
+    const previousWork = sessionLocks.get(lockKey) ?? Promise.resolve();
+
+    const currentWork = previousWork.then(async () => {
+      // Delete the "Queued..." message and re-show "is thinking..." now that it's our turn
+      if (isQueued) {
+        if (queuedMsgTs) {
+          await slackClient!.deleteMessage({ channel: channelId, ts: queuedMsgTs }).catch(() => {});
+        }
+        void slackClient!.getWebClient().assistant.threads.setStatus({
+          channel_id: channelId,
+          thread_ts: statusThreadTs,
+          status: 'is thinking...',
+        }).catch(() => {});
+      }
 
     try {
       // Get or create session
@@ -630,6 +673,17 @@ export async function start(): Promise<void> {
       logger.error({ error }, 'Unhandled error in message handler');
       await say({ text: '❌ An unexpected error occurred.', thread_ts: replyThreadTs });
     }
+    }).catch((error) => {
+      // Safety net — should never fire since inner try/catch handles everything
+      logger.error({ error }, 'Unhandled error in session lock chain');
+    }).finally(() => {
+      // Clean up lock if we're the last item in the chain
+      if (sessionLocks.get(lockKey) === currentWork) {
+        sessionLocks.delete(lockKey);
+      }
+    });
+
+    sessionLocks.set(lockKey, currentWork);
   });
 
   setupShutdownHandlers();
