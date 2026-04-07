@@ -22,6 +22,7 @@ export const INITIATE_TYPES: readonly string[] = ['morning', 'weekly', 'explorat
 export const MAINTENANCE_TYPES: readonly string[] = ['daily-synthesis', 'index-memory'];
 
 export interface ScheduleTask {
+  /** Task name — defaults to type if omitted */
   name: string;
   type: TaskType;
   /** Slack channel — required for initiate tasks, ignored for maintenance tasks */
@@ -194,10 +195,10 @@ export function loadSchedule(path: string): ScheduleConfig {
     throw new Error(`Invalid schedule file: expected "tasks" array in ${path}`);
   }
 
-  // Validate each task
+  // Validate and normalize each task
   for (const task of parsed.tasks) {
-    if (!task.name) throw new Error('Each task needs a "name".');
-    if (!task.type) throw new Error(`Task "${task.name}" needs a "type".`);
+    if (!task.type) throw new Error(`Task "${task.name || '(unnamed)'}" needs a "type".`);
+    if (!task.name) task.name = task.type;
     if (INITIATE_TYPES.includes(task.type) && !task.channel) {
       throw new Error(`Task "${task.name}" (type: ${task.type}) needs a "channel".`);
     }

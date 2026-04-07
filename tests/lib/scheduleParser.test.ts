@@ -455,14 +455,15 @@ tasks:
     expect(() => loadSchedule(path)).toThrow('expected "tasks" array');
   });
 
-  it('rejects task with no name', () => {
-    const path = writeYaml('bad.yaml', `
+  it('defaults name to type when omitted', () => {
+    const path = writeYaml('ok.yaml', `
 tasks:
   - type: morning
     at: "8:30"
     channel: C123
 `);
-    expect(() => loadSchedule(path)).toThrow('needs a "name"');
+    const config = loadSchedule(path);
+    expect(config.tasks[0].name).toBe('morning');
   });
 
   it('rejects task with no type', () => {
