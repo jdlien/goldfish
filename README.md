@@ -7,10 +7,10 @@ Goldfish allows you to use Claude Code from Slack — but it's also much more th
 This gives you:
 
 - **Full tool access:** Bash, file read/write, web search
-- **Thread-based sessions:** Have multiple simultaneous slack threads across different channels.
-- **Persistent memory:** Your agent can remember the most important details of your conversations over time and gets to know you personally, details about your life, and what you're working on.
-- **Proactive outreach** — morning briefings, hourly heartbeat checks, and optional daily exploration sessions via scheduled tasks and reminders
-- **Zero API cost** for conversations — everything runs through Claude Code on a Max subscription
+- **Thread-based sessions:** Multiple simultaneous Slack threads across different channels
+- **Persistent memory:** Your agent remembers the most important details of your conversations over time and gets to know you personally, details about your life, and what you're working on
+- **Proactive outreach:** Morning briefings, hourly heartbeat checks, and optional daily exploration sessions via scheduled tasks and reminders
+- **Zero API cost:** Conversations run through Claude Code on a Max subscription
 
 ## Why This Exists
 
@@ -21,12 +21,12 @@ OpenClaw is great, but it has some issues:
 
 And crucially:
 
-- Anthropic stopped allowing SSO auth with third-party harnesses like OpenClaw, so it became enormously expensive.
-- Claude Code "just works" with a Claude Max subscription, OpenClaw had reliability issues with Claude models.
+- Anthropic stopped allowing SSO auth with third-party harnesses like OpenClaw, so it became enormously expensive
+- Claude Code "just works" with a Claude Max subscription; OpenClaw had reliability issues with Claude models
 
-While OpenClaw could technically work via ACP bridges to Claude Code, there were many problems including zombie `claude` sessions and still required significant API usage (at full API costs) for certain features. This made it unusable in practice.
+While OpenClaw could technically work via ACP bridges to Claude Code, there were many problems including zombie `claude` sessions and it still required significant API usage (at full API costs) for certain features. This made it unusable in practice.
 
-If you only want to use Claude over Slack, Goldfish does 90% of what OpenClaw did (when with 10% of the complexity:
+If you only want to use Claude over Slack, Goldfish does 90% of what OpenClaw did with 10% of the complexity:
 
 | Feature            | OpenClaw                      | Goldfish                |
 | ------------------ | ----------------------------- | ----------------------- |
@@ -109,7 +109,7 @@ This means you can use Goldfish as:
 - A drop-in replacement for an [OpenClaw](https://openclaw.ai) agent (same workspace, simpler runtime)
 - Anything else you can define in a `CLAUDE.md`
 
-The workspace pattern — identity as markdown files, memory as a searchable archive, personality that evolves through conversation — is the core of what makes a persistent agent feel _persistent_. See [`docs/agent-identity.md`](docs/agent-identity.md) for the full design philosophy, workspace anatomy, and migration guide from OpenClaw.
+The workspace pattern (identity as markdown files, memory as a searchable archive, personality that evolves through conversation) is the core of what makes a persistent agent feel _persistent_. See [`docs/agent-identity.md`](docs/agent-identity.md) for the full design philosophy, workspace anatomy, and migration guide from OpenClaw.
 
 ## Commands
 
@@ -131,7 +131,7 @@ goldfish schedule run --dry-run         # Preview what would run
 
 ## Scheduling
 
-Goldfish uses a single `schedule.yaml` to run tasks on a schedule — briefings, heartbeats, maintenance, whatever you need. A launchd agent fires every 60 seconds and runs any due tasks:
+Goldfish uses a single `schedule.yaml` to define tasks on a schedule: briefings, heartbeats, maintenance, whatever you need. A launchd agent fires every 60 seconds and runs any due tasks:
 
 ```yaml
 tasks:
@@ -152,15 +152,15 @@ tasks:
     at: "1:15am"
 ```
 
-See [`docs/scheduling.md`](docs/scheduling.md) for the full reference — all fields, task types, timing syntax, locking, and configuration options.
+See [`docs/scheduling.md`](docs/scheduling.md) for the full reference: all fields, task types, timing syntax, locking, and configuration options.
 
 ## Memory System
 
 Goldfish maintains memory through three layers:
 
-1. **In-session:** The agent writes to memory files during conversations (daily notes, project files, etc.)
+1. **In-session:** The agent writes to memory files during conversations (daily notes, project files, etc)
 2. **Post-session transcripts:** Every message exchange is appended to `memory/sessions/YYYY-MM-DD.jsonl`
-3. **Daily synthesis:** A scheduled task to consolidate the day's transcripts into a narrative daily log
+3. **Daily synthesis:** A scheduled task consolidates the day's transcripts into a narrative daily log
 
 Search memory from within a Claude session:
 
