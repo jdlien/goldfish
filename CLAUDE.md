@@ -37,7 +37,9 @@ src/
 │   ├── auth.ts                 # Token status/test
 │   ├── send.ts                 # Manual message sending
 │   ├── upload.ts               # File upload
-│   └── initiate.ts             # Proactive outreach (briefings, reminders)
+│   ├── initiate.ts             # Proactive outreach (briefings, reminders)
+│   ├── maintenance.ts          # Scheduled maintenance (synthesis, indexing)
+│   └── schedule.ts             # Schedule runner (reads schedule.yaml)
 ├── adapters/
 │   ├── SlackBoltClient.ts      # Slack Bolt SDK wrapper (Socket Mode)
 │   ├── ClaudeRunner.ts         # Spawns `claude` CLI, parses JSON output
@@ -52,18 +54,17 @@ src/
 │   └── migrations/             # Schema migrations
 └── lib/
     ├── logger.ts               # Pino logger
-    └── slackFormatter.ts       # Markdown → Slack mrkdwn + message splitting
+    ├── slackFormatter.ts       # Markdown → Slack mrkdwn + message splitting
+    ├── scheduleParser.ts       # schedule.yaml → cron matching
+    └── memoryIndexer.ts        # FTS5 index builder (better-sqlite3)
 
 scripts/
-├── daily-synthesis.sh          # Cron: consolidate JSONL → daily memory log (Sonnet)
-├── index-memory.sh             # Cron: rebuild FTS5 search index
-└── index-memory.py             # Python FTS5 indexer
+├── daily-synthesis.sh          # Consolidate JSONL → daily memory log
+└── index-memory.sh             # Shell wrapper for index-memory CLI command
 
 launchd/
 ├── goldfish-env.sh             # Shell env bootstrap for launchd
-├── com.goldfish.daemon.plist   # Bot daemon (KeepAlive)
-├── com.goldfish.daily-synthesis.plist  # 1:00 AM
-└── com.goldfish.index-memory.plist     # 1:15 AM
+└── com.goldfish.daemon.plist   # Bot daemon (KeepAlive)
 ```
 
 ## How It Works

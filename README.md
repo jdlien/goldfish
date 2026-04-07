@@ -2,7 +2,7 @@
 
 **AI agent runtime — a Claude Code-native Slack bot with persistent memory.**
 
-Goldfish allows you to use Claude Code from Slack — but it's also much more than that. It's like we took the best parts of OpenClaw but made it dramatically simpler and polished for a specific use case — Claude Code + Slack. But _your_ agent that knows you.
+Goldfish allows you to use Claude Code from Slack — but it's also much more than that. Think of it like the best parts of the OpenClaw AI assistant harness but dramatically simpler, polished for a specific use case. It's _your_ agent that knows _you_.
 
 This gives you:
 - **Full tool access:** Bash, file read/write, web search
@@ -13,15 +13,17 @@ This gives you:
 
 ## Why This Exists
 
-I was a happy user of OpenClaw, but over time, I discovered issues:
-- It was complex to set up and keep working
-- It had many bugs. While it is open source, the popularity of the project means that my pull requests were unlikely to get merged in.
+OpenClaw is great, but it has some issues:
+- It is complex to set up and keep working
+- It had many bugs in its Slack integration
+
+And crucially:
 - Anthropic stopped allowing SSO auth with third-party harnesses like OpenClaw, so it became enormously expensive.
 - Claude Code "just works" with a Claude Max subscription, OpenClaw had reliability issues with Claude models.
 
-While OpenClaw could technically work via ACP bridges, there were many problems including zombie `claude` sessions and still required significant API usage (at full API costs), and it required frequent restarts. This made it unusable in practice.
+While OpenClaw could technically work via ACP bridges to Claude Code, there were many problems including zombie `claude` sessions and still required significant API usage (at full API costs) for certain features. This made it unusable in practice.
 
-Goldfish does 90% of what OpenClaw did with 10% of the complexity:
+If you only want to use Claude over Slack, Goldfish does 90% of what OpenClaw did (when with 10% of the complexity:
 
 | Feature            | OpenClaw                      | Goldfish                |
 | ------------------ | ----------------------------- | ------------------------|
@@ -36,15 +38,16 @@ Goldfish is compatible with OpenClaw agent workspaces. It can use the same ident
 ## Architecture
 
 ```
-Slack message → Goldfish daemon → spawns claude CLI → reads agent config → responds
-                                                    → saves transcript to JSONL
+Slack message  → Goldfish daemon → spawns claude CLI → reads agent config → responds
+                                                     → saves transcript to JSONL
 
-Cron (1:00 AM)  → daily-synthesis.sh   → Sonnet summarizes the day → memory/YYYY-MM-DD.md
-Cron (1:15 AM)  → index-memory.sh      → Python rebuilds FTS5 index → memory/search.sqlite
-Cron (every min) → schedule run         → Checks schedule.yaml, fires due tasks
+schedule.yaml  → schedule run (cron, every minute)
+               → morning / heartbeat / exploration / weekly  → Claude → Slack
+               → daily-synthesis (1 AM)                      → Claude summarizes → memory/YYYY-MM-DD.md
+               → index-memory (1:15 AM)                      → rebuilds FTS5     → memory/search.sqlite
 ```
 
-One daemon. One cron entry. A config file. That's the whole thing. See [`docs/deployment-macos.md`](docs/deployment-macos.md) for the full launchd setup.
+One daemon. One cron entry. One config file. That's the whole thing. See [`docs/deployment-macos.md`](docs/deployment-macos.md) for the full setup.
 
 ## Quick Start
 

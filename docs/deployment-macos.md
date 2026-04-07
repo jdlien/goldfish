@@ -149,15 +149,11 @@ cp launchd/*.plist ~/Library/LaunchAgents/
 ```bash
 # Start the daemon (starts immediately and on every login)
 launchctl load ~/Library/LaunchAgents/com.goldfish.daemon.plist
-
-# Load the maintenance jobs
-launchctl load ~/Library/LaunchAgents/com.goldfish.daily-synthesis.plist
-launchctl load ~/Library/LaunchAgents/com.goldfish.index-memory.plist
 ```
 
-Proactive outreach (morning briefings, heartbeats, explorations) is handled by
-the scheduler — see "The scheduler" section above for setting up `schedule.yaml`
-with a single cron entry.
+All scheduled tasks — proactive outreach (morning briefings, heartbeats, explorations)
+and maintenance (daily synthesis, memory indexing) — are handled by `schedule.yaml`
+with a single cron entry. See "The scheduler" section above.
 
 ### 6. Verify
 

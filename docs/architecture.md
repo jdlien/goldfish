@@ -142,7 +142,7 @@ At 1 AM, `scripts/daily-synthesis.sh`:
 
 ### Layer 4: FTS5 Search Index
 
-`scripts/index-memory.py` walks all markdown files and builds a full-text search index. Pure text processing — no API calls, no embeddings, no cost.
+`src/lib/memoryIndexer.ts` walks all markdown files and builds a full-text search index. Pure text processing — no API calls, no embeddings, no cost.
 
 1. Walks `memory/`, identity files, config files
 2. Chunks by markdown heading or ~500-word blocks
