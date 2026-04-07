@@ -12,6 +12,9 @@ import {
   init,
   scheduleRun,
   scheduleList,
+  remindCreate,
+  remindList,
+  remindDelete,
   browserLogin,
   browserGoto,
   browserScrape,
@@ -157,6 +160,42 @@ schedule
     scheduleList({
       config: options.config,
     });
+  });
+
+// Remind commands
+const remind = program.command('remind').description('Manage scheduled reminders');
+
+remind
+  .command('create <message>')
+  .description('Create a reminder')
+  .requiredOption('--at <time>', 'When to fire: "noon tomorrow", "5pm friday", "in 2 hours"')
+  .option('-c, --channel <id>', 'Channel ID (defaults to GOLDFISH_DM_CHANNEL_ID)')
+  .option('--recurring', 'Make this a recurring reminder')
+  .option('--days <days>', 'Days for recurring: daily, weekdays, weekends, mon,wed,fri')
+  .option('--context <text>', 'Extra context for the reminder prompt')
+  .action((message: string, options) => {
+    remindCreate({
+      message,
+      at: options.at,
+      channel: options.channel,
+      recurring: options.recurring,
+      days: options.days,
+      context: options.context,
+    });
+  });
+
+remind
+  .command('list')
+  .description('List all reminders')
+  .action(() => {
+    remindList();
+  });
+
+remind
+  .command('delete <id>')
+  .description('Delete a reminder (supports ID prefix match)')
+  .action((id: string) => {
+    remindDelete({ id });
   });
 
 // Browser commands

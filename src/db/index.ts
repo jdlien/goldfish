@@ -5,6 +5,7 @@ import { dirname, join } from 'path';
 import { mkdirSync, existsSync } from 'fs';
 import type { Database as DatabaseSchema } from './types.js';
 import { up as migration001 } from './migrations/001-initial.js';
+import { up as migration002 } from './migrations/002-reminders.js';
 import { createChildLogger } from '../lib/logger.js';
 
 const logger = createChildLogger('db');
@@ -55,6 +56,7 @@ export async function runMigrations(db: Kysely<DatabaseSchema>): Promise<void> {
 
   try {
     await migration001(db);
+    await migration002(db);
     logger.info('Migrations completed successfully');
   } catch (error) {
     logger.error({ error }, 'Migration failed');

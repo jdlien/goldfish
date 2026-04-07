@@ -65,13 +65,17 @@ Write a daily log for ${DATE} in the style of existing daily files in memory/.
 PROMPT_EOF
 )
 
-# Use Sonnet for synthesis
+# Run from /tmp to avoid CLAUDE.md auto-discovery (prevents persona loading).
+# --allowedTools "": disable all tools so Claude produces pure text (no tool loops).
+cd /tmp
 claude -p "$PROMPT" \
   --model "$MODEL" \
-  --max-turns 3 \
+  --max-turns 1 \
   --dangerously-skip-permissions \
   --output-format text \
+  --allowedTools "" \
   > "${DAILY_FILE}.tmp"
+cd - > /dev/null
 
 # Only replace if synthesis succeeded
 if [ -s "${DAILY_FILE}.tmp" ]; then

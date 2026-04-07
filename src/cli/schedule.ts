@@ -15,6 +15,8 @@ import { existsSync, writeFileSync, readFileSync, unlinkSync } from 'fs';
 import { loadSchedule, toCron, cronMatchesNow, INITIATE_TYPES, type ScheduleTask, type InitiateTaskType } from '../lib/scheduleParser.js';
 import { initiate } from './initiate.js';
 import { runMaintenanceTask } from './maintenance.js';
+import { initDb, closeDb } from '../db/index.js';
+import { SqliteRepo } from '../adapters/SqliteRepo.js';
 import { createChildLogger } from '../lib/logger.js';
 
 const logger = createChildLogger('cli:schedule');
@@ -110,11 +112,7 @@ export async function scheduleRun(options: ScheduleRunOptions): Promise<void> {
     return cronMatchesNow(cronExpr, now);
   });
 
-  if (dueTasks.length === 0) {
-    // Normal for most minutes — silent exit
-    return;
-  }
-
+  // Run due YAML-configured tasks
   for (const task of dueTasks) {
     const cronExpr = toCron(task);
 
@@ -154,6 +152,78 @@ export async function scheduleRun(options: ScheduleRunOptions): Promise<void> {
     } finally {
       releaseLock(task.name);
     }
+  }
+
+  // --- Dynamic reminders (from SQLite) ---
+  await fireReminders(options.dryRun, now);
+}
+
+/**
+ * Check and fire any due reminders from the database.
+ */
+async function fireReminders(dryRun?: boolean, now: Date = new Date()): Promise<void> {
+  const db = await initDb();
+  const repo = new SqliteRepo(db);
+
+  try {
+    const nowMs = now.getTime();
+
+    // One-shot reminders: fire_at <= now
+    const dueResult = await repo.getDueReminders(nowMs);
+    if (dueResult.ok) {
+      for (const reminder of dueResult.value) {
+        if (dryRun) {
+          console.log(chalk.yellow(`[DRY RUN] Would fire reminder: ${reminder.message}`));
+          continue;
+        }
+
+        logger.info({ reminderId: reminder.id }, 'Firing one-shot reminder');
+        console.log(chalk.bold(`🔔 Firing reminder: ${reminder.message}`));
+
+        try {
+          await initiate({
+            type: 'heartbeat',
+            channel: reminder.channel,
+            reminder: reminder.message,
+          });
+          await repo.deleteReminder(reminder.id);
+        } catch (err) {
+          logger.error({ reminderId: reminder.id, error: err }, 'Failed to fire reminder');
+          console.error(chalk.red(`✗ Reminder failed: ${reminder.message}`), err);
+        }
+      }
+    }
+
+    // Recurring reminders: check cron match
+    const recurringResult = await repo.getRecurringReminders();
+    if (recurringResult.ok) {
+      for (const reminder of recurringResult.value) {
+        if (!reminder.cron) continue;
+        if (!cronMatchesNow(reminder.cron, now)) continue;
+
+        if (dryRun) {
+          console.log(chalk.yellow(`[DRY RUN] Would fire recurring reminder: ${reminder.message}`));
+          continue;
+        }
+
+        logger.info({ reminderId: reminder.id, cron: reminder.cron }, 'Firing recurring reminder');
+        console.log(chalk.bold(`🔔 Firing recurring reminder: ${reminder.message}`));
+
+        try {
+          await initiate({
+            type: 'heartbeat',
+            channel: reminder.channel,
+            reminder: reminder.message,
+          });
+          await repo.markReminderFired(reminder.id, nowMs);
+        } catch (err) {
+          logger.error({ reminderId: reminder.id, error: err }, 'Failed to fire recurring reminder');
+          console.error(chalk.red(`✗ Recurring reminder failed: ${reminder.message}`), err);
+        }
+      }
+    }
+  } finally {
+    await closeDb();
   }
 }
 

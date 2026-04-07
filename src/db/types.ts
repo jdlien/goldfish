@@ -22,7 +22,20 @@ export interface MessageTable {
   created_at: number;
 }
 
+export interface ReminderTable {
+  id: string;
+  channel: string;
+  message: string;
+  cron: string | null;
+  fire_at: number | null;
+  recurring: number; // 0 = one-shot, 1 = recurring
+  created_at: number;
+  fired_at: number | null;
+  context: string | null;
+}
+
 export interface Database {
   sessions: SessionTable;
   messages: MessageTable;
+  reminders: ReminderTable;
 }

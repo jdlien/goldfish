@@ -1,5 +1,6 @@
 import type { Kysely } from 'kysely';
 import type { Database } from '../db/types.js';
+import { randomUUID } from 'crypto';
 import {
   type Session,
   type Message,
@@ -8,6 +9,7 @@ import {
   type CreateSessionParams,
   type CreateMessageParams,
 } from '../domain/index.js';
+import type { ReminderTable } from '../db/types.js';
 import {
   type Result,
   ok,
@@ -369,6 +371,129 @@ export class SqliteRepo {
       return err(
         createError(ErrorCodes.DATABASE_ERROR, 'Failed to get stats', error)
       );
+    }
+  }
+
+  // --- Reminders ---
+
+  /**
+   * Create a reminder (one-shot or recurring)
+   */
+  async createReminder(params: {
+    channel: string;
+    message: string;
+    fireAt?: number;
+    cron?: string;
+    recurring?: boolean;
+    context?: string;
+  }): Promise<Result<ReminderTable>> {
+    try {
+      const reminder: ReminderTable = {
+        id: randomUUID(),
+        channel: params.channel,
+        message: params.message,
+        cron: params.cron ?? null,
+        fire_at: params.fireAt ?? null,
+        recurring: params.recurring ? 1 : 0,
+        created_at: Date.now(),
+        fired_at: null,
+        context: params.context ?? null,
+      };
+
+      await this.db.insertInto('reminders').values(reminder).execute();
+
+      logger.info({ reminderId: reminder.id, fireAt: reminder.fire_at, cron: reminder.cron }, 'Created reminder');
+      return ok(reminder);
+    } catch (error) {
+      logger.error({ error, params }, 'Failed to create reminder');
+      return err(createError(ErrorCodes.DATABASE_ERROR, 'Failed to create reminder', error));
+    }
+  }
+
+  /**
+   * Get one-shot reminders that are due (fire_at <= now, not yet fired)
+   */
+  async getDueReminders(nowMs: number): Promise<Result<ReminderTable[]>> {
+    try {
+      const rows = await this.db
+        .selectFrom('reminders')
+        .selectAll()
+        .where('recurring', '=', 0)
+        .where('fire_at', '<=', nowMs)
+        .where('fired_at', 'is', null)
+        .execute();
+
+      return ok(rows);
+    } catch (error) {
+      logger.error({ error }, 'Failed to get due reminders');
+      return err(createError(ErrorCodes.DATABASE_ERROR, 'Failed to get due reminders', error));
+    }
+  }
+
+  /**
+   * Get all recurring reminders
+   */
+  async getRecurringReminders(): Promise<Result<ReminderTable[]>> {
+    try {
+      const rows = await this.db
+        .selectFrom('reminders')
+        .selectAll()
+        .where('recurring', '=', 1)
+        .execute();
+
+      return ok(rows);
+    } catch (error) {
+      logger.error({ error }, 'Failed to get recurring reminders');
+      return err(createError(ErrorCodes.DATABASE_ERROR, 'Failed to get recurring reminders', error));
+    }
+  }
+
+  /**
+   * Mark a one-shot reminder as fired and delete it
+   */
+  async deleteReminder(id: string): Promise<Result<void>> {
+    try {
+      await this.db.deleteFrom('reminders').where('id', '=', id).execute();
+      logger.info({ reminderId: id }, 'Deleted reminder');
+      return ok(undefined);
+    } catch (error) {
+      logger.error({ error, id }, 'Failed to delete reminder');
+      return err(createError(ErrorCodes.DATABASE_ERROR, 'Failed to delete reminder', error));
+    }
+  }
+
+  /**
+   * Update fired_at for a recurring reminder
+   */
+  async markReminderFired(id: string, firedAt: number): Promise<Result<void>> {
+    try {
+      await this.db
+        .updateTable('reminders')
+        .set({ fired_at: firedAt })
+        .where('id', '=', id)
+        .execute();
+      return ok(undefined);
+    } catch (error) {
+      logger.error({ error, id }, 'Failed to mark reminder fired');
+      return err(createError(ErrorCodes.DATABASE_ERROR, 'Failed to mark reminder fired', error));
+    }
+  }
+
+  /**
+   * List all reminders (for CLI display)
+   */
+  async listReminders(): Promise<Result<ReminderTable[]>> {
+    try {
+      const rows = await this.db
+        .selectFrom('reminders')
+        .selectAll()
+        .orderBy('created_at', 'desc')
+        .execute();
+
+      return ok(rows);
+    } catch (error) {
+      logger.error({ error }, 'Failed to list reminders');
+      return err(createError(ErrorCodes.DATABASE_ERROR, 'Failed to list reminders', error));
     }
   }
 }

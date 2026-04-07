@@ -10,4 +10,5 @@ export {
   browserScreenshot,
 } from './browser.js';
 export { scheduleRun, scheduleList, type ScheduleRunOptions, type ScheduleListOptions } from './schedule.js';
+export { remindCreate, remindList, remindDelete, type RemindCreateOptions, type RemindDeleteOptions } from './remind.js';
 export { init, type InitOptions } from './init.js';
