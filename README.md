@@ -9,7 +9,7 @@ This gives you:
 - **Full tool access:** Bash, file read/write, web search
 - **Thread-based sessions:** Have multiple simultaneous slack threads across different channels.
 - **Persistent memory:** Your agent can remember the most important details of your conversations over time and gets to know you personally, details about your life, and what you're working on.
-- **Proactive outreach** — morning briefings, hourly heartbeat checks, and optional daily exploration sessions via cron jobs
+- **Proactive outreach** — morning briefings, hourly heartbeat checks, and optional daily exploration sessions via scheduled tasks and reminders
 - **Zero API cost** for conversations — everything runs through Claude Code on a Max subscription
 
 ## Why This Exists
@@ -32,7 +32,7 @@ If you only want to use Claude over Slack, Goldfish does 90% of what OpenClaw di
 | ------------------ | ----------------------------- | ----------------------- |
 | Conversations      | ACP bridge (fragile)          | Claude Code CLI (solid) |
 | Session continuity | ACP session management        | `--resume` flag         |
-| Memory             | Built-in indexer + embeddings | FTS5 + cron synthesis   |
+| Memory             | Built-in indexer + embeddings | FTS5 + scheduled synthesis |
 | Channels           | Slack, Telegram, Signal       | Slack                   |
 | Cost               | API Cost                      | Max Plan                |
 
@@ -44,7 +44,7 @@ Goldfish is compatible with OpenClaw agent workspaces. It can use the same ident
 Slack message  → Goldfish daemon → spawns claude CLI → reads agent config → responds
                                                      → saves transcript to JSONL
 
-schedule.yaml  → schedule run (cron, every minute)
+schedule.yaml  → schedule run (every minute)
                → morning / heartbeat / exploration / weekly  → Claude → Slack
                → daily-synthesis (1 AM)                      → Claude summarizes → memory/YYYY-MM-DD.md
                → index-memory (1:15 AM)                      → rebuilds FTS5     → memory/search.sqlite
@@ -160,7 +160,7 @@ Goldfish maintains memory through three layers:
 
 1. **In-session:** The agent writes to memory files during conversations (daily notes, project files, etc.)
 2. **Post-session transcripts:** Every message exchange is appended to `memory/sessions/YYYY-MM-DD.jsonl`
-3. **Daily synthesis:** A cron job to consolidate the day's transcripts into a narrative daily log
+3. **Daily synthesis:** A scheduled task to consolidate the day's transcripts into a narrative daily log
 
 Search memory from within a Claude session:
 
