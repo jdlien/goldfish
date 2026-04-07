@@ -73,6 +73,21 @@ export const STREAM_UPDATE_INTERVAL_MS = Number(
 export const SHOW_TOOLS = process.env.GOLDFISH_SHOW_TOOLS !== 'false';
 
 /**
+ * Buffer size (chars) for Slack's native ChatStreamer. Controls how many
+ * chars the SDK accumulates before making an appendStream API call.
+ *
+ * Note: Slack's client-side streaming renderer has cosmetic bugs (missing
+ * spaces, spurious newlines) regardless of buffer size — confirmed Apr 2026.
+ * This setting is kept configurable for future experimentation.
+ *
+ * Default: 1024. Slack SDK default is 256.
+ * Set `GOLDFISH_STREAM_BUFFER_SIZE` to tune.
+ */
+export const STREAM_BUFFER_SIZE = Number(
+  process.env.GOLDFISH_STREAM_BUFFER_SIZE ?? 1024
+);
+
+/**
  * Validate that the workspace directory exists and contains a CLAUDE.md.
  * Call this at the start of commands that need the workspace (start, initiate).
  * Returns null if valid, or an error message string.

@@ -1,6 +1,7 @@
 import { webApi } from '@slack/bolt';
 import { createChildLogger } from './logger.js';
 import type { URLSource } from './toolSources.js';
+import { STREAM_BUFFER_SIZE } from '../config.js';
 
 type WebClient = webApi.WebClient;
 type ChatStreamer = ReturnType<WebClient['chatStream']>;
@@ -144,7 +145,7 @@ export class SlackNativeStreamer {
       // Larger buffer reduces the chance of Slack's renderer eating
       // newlines that fall on a flush boundary. Default is 256; 1024
       // means fewer, larger API calls — still well under rate limits.
-      buffer_size: 1024,
+      buffer_size: STREAM_BUFFER_SIZE,
       ...(this.recipientTeamId ? { recipient_team_id: this.recipientTeamId } : {}),
       ...(this.recipientUserId ? { recipient_user_id: this.recipientUserId } : {}),
     });
@@ -161,12 +162,17 @@ export class SlackNativeStreamer {
 
   /**
    * Append raw markdown text to the stream. The SDK buffers internally
-   * (default 256 chars) so there's no need to throttle on our side —
-   * just pass text through as it arrives from Claude.
+   * and flushes based on buffer_size, so we pass text through as it
+   * arrives from Claude.
    *
    * If any tool tasks are still "in_progress" when text arrives, they're
    * marked complete first — a text_delta after a tool means the tool has
    * finished executing and Claude is now generating the response.
+   *
+   * Note: Slack's client-side streaming renderer has known cosmetic bugs
+   * (missing spaces, spurious newlines mid-word) that resolve on reload.
+   * We've confirmed this is a Slack-side issue — buffering/debouncing on
+   * our end does not help.
    */
   async appendText(markdown: string): Promise<void> {
     if (!this.streamer || this.stopped || !markdown) return;
@@ -177,31 +183,22 @@ export class SlackNativeStreamer {
     }
 
     // Soft threshold: start looking for a natural break point.
-    // Text deltas from Claude are tiny (a few words each), so we can't
-    // rely on finding a newline in the single chunk that crosses the
-    // hard threshold. Instead, once we enter the "soft zone" (between
-    // SOFT and HARD thresholds), check every incoming chunk for a newline.
-    // When one arrives, flush everything up to the newline on the current
-    // stream, roll over, and send the rest on the new stream.
     const projectedSize = this.bytesInCurrentStream + markdown.length;
 
     if (this.seekingBreak || projectedSize > ROLLOVER_SOFT_THRESHOLD_BYTES) {
       this.seekingBreak = true;
 
-      // Look for a break in this chunk
       const paraIdx = markdown.lastIndexOf('\n\n');
       const lineIdx = markdown.lastIndexOf('\n');
       const breakIdx = paraIdx > 0 ? paraIdx : lineIdx > 0 ? lineIdx : -1;
-      const breakLen = paraIdx > 0 ? 2 : 1; // \n\n vs \n
+      const breakLen = paraIdx > 0 ? 2 : 1;
 
       if (breakIdx > 0) {
-        // Found a break — split here
         const before = markdown.slice(0, breakIdx);
         const after = markdown.slice(breakIdx + breakLen);
 
         this.rawText += markdown;
 
-        // Send the part before the break on the current stream
         if (before) {
           this.currentStreamText += before;
           try {
@@ -212,13 +209,11 @@ export class SlackNativeStreamer {
             // Partial send failed — will be handled by rollover
           }
         }
-        // Credit separator bytes
         this.confirmedSentBytes += breakLen;
 
         await this.rollover();
         this.seekingBreak = false;
 
-        // Send the part after the break on the new stream
         if (after) {
           this.currentStreamText += after;
           try {
@@ -233,14 +228,10 @@ export class SlackNativeStreamer {
         return;
       }
 
-      // No break found in this chunk. If we've hit the hard threshold,
-      // force rollover (can't wait any longer or Slack will reject).
       if (projectedSize > ROLLOVER_THRESHOLD_BYTES) {
         await this.rollover();
         this.seekingBreak = false;
-        // Fall through to normal append on the new stream
       }
-      // Otherwise keep seeking — append normally and wait for next chunk
     }
 
     this.rawText += markdown;
@@ -251,8 +242,6 @@ export class SlackNativeStreamer {
       this.confirmedSentBytes += markdown.length;
     } catch (error) {
       if (isRecoverableStreamError(error) && !this.stopped) {
-        // Reactive rollover: Slack said the current stream is full or expired.
-        // Open a fresh stream and retry the chunk once.
         logger.warn(
           { bytesInCurrentStream: this.bytesInCurrentStream },
           'Stream hit recoverable error; rolling over to a new chatStream',
@@ -335,7 +324,7 @@ export class SlackNativeStreamer {
     this.streamer = this.webClient.chatStream({
       channel: this.channel,
       thread_ts: this.threadTs,
-      buffer_size: 1024,
+      buffer_size: STREAM_BUFFER_SIZE,
       ...(this.recipientTeamId ? { recipient_team_id: this.recipientTeamId } : {}),
       ...(this.recipientUserId ? { recipient_user_id: this.recipientUserId } : {}),
     });
