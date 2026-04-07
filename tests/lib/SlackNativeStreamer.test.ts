@@ -799,4 +799,119 @@ describe('SlackNativeStreamer', () => {
       });
     });
   });
+
+  // =================================================================
+  // BUG: Proactive rollover splits mid-paragraph. Should prefer
+  // splitting at newline boundaries so the visual break between
+  // Slack messages feels natural.
+  // =================================================================
+
+  describe('smart rollover — split at newline boundaries (RED)', () => {
+    it('splits at a newline when the chunk contains one near the threshold', async () => {
+      const streamer2 = createMockStreamer();
+      mockClient.chatStream
+        .mockReturnValueOnce(mockStreamer)
+        .mockReturnValueOnce(streamer2);
+
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
+      streamer.start();
+
+      // Fill to just under threshold (8000 - needs chunk to push over)
+      const filler = 'x'.repeat(7960);
+      await streamer.appendText(filler);
+      mockStreamer.append.mockClear();
+
+      // This chunk crosses the threshold and contains a newline.
+      // Should split: send up to the newline on the old stream,
+      // rollover, send the rest on the new stream.
+      const chunk = 'end of first message.\n\nStart of new message.';
+      await streamer.appendText(chunk);
+
+      // Old stream got the part before the break
+      expect(mockStreamer.append).toHaveBeenCalledWith({
+        markdown_text: 'end of first message.',
+      });
+
+      // New stream got the part after the break
+      expect(streamer2.append).toHaveBeenCalledWith({
+        markdown_text: 'Start of new message.',
+      });
+
+      // All content preserved
+      expect(streamer.getRawText()).toBe(filler + chunk);
+      expect(streamer.getUnsentText()).toBe('');
+    });
+
+    it('prefers paragraph breaks (double newline) over single newlines', async () => {
+      const streamer2 = createMockStreamer();
+      mockClient.chatStream
+        .mockReturnValueOnce(mockStreamer)
+        .mockReturnValueOnce(streamer2);
+
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
+      streamer.start();
+
+      const filler = 'x'.repeat(7980);
+      await streamer.appendText(filler);
+      mockStreamer.append.mockClear();
+
+      const chunk = 'line one\nline two\n\nparagraph two';
+      await streamer.appendText(chunk);
+
+      // Should split at \n\n, not at the first \n
+      expect(mockStreamer.append).toHaveBeenCalledWith({
+        markdown_text: 'line one\nline two',
+      });
+      expect(streamer2.append).toHaveBeenCalledWith({
+        markdown_text: 'paragraph two',
+      });
+    });
+
+    it('falls back to single newline when no paragraph break exists', async () => {
+      const streamer2 = createMockStreamer();
+      mockClient.chatStream
+        .mockReturnValueOnce(mockStreamer)
+        .mockReturnValueOnce(streamer2);
+
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
+      streamer.start();
+
+      const filler = 'x'.repeat(7960);
+      await streamer.appendText(filler);
+      mockStreamer.append.mockClear();
+
+      const chunk = 'end of line one\nstart of line two continues here';
+      await streamer.appendText(chunk);
+
+      expect(mockStreamer.append).toHaveBeenCalledWith({
+        markdown_text: 'end of line one',
+      });
+      expect(streamer2.append).toHaveBeenCalledWith({
+        markdown_text: 'start of line two continues here',
+      });
+    });
+
+    it('forces rollover when chunk has no newline at all', async () => {
+      const streamer2 = createMockStreamer();
+      mockClient.chatStream
+        .mockReturnValueOnce(mockStreamer)
+        .mockReturnValueOnce(streamer2);
+
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
+      streamer.start();
+
+      const filler = 'x'.repeat(7980);
+      await streamer.appendText(filler);
+      mockStreamer.append.mockClear();
+
+      // No newlines — must force rollover and send whole chunk to new stream
+      const chunk = 'no breaks in this text at all';
+      await streamer.appendText(chunk);
+
+      // Whole chunk goes to the new stream (old stream already rolled over)
+      expect(streamer2.append).toHaveBeenCalledWith({
+        markdown_text: 'no breaks in this text at all',
+      });
+    });
+  });
 });

@@ -155,10 +155,59 @@ export class SlackNativeStreamer {
     }
 
     // Proactive rollover: if adding this chunk would push us over
-    // the safe threshold, close the current stream and start a fresh
-    // one in the same thread before sending.
+    // the safe threshold, split at a natural break point so the
+    // message boundary falls on a paragraph or line break.
     if (this.bytesInCurrentStream + markdown.length > ROLLOVER_THRESHOLD_BYTES) {
+      const { before, after } = splitAtBreak(markdown);
+
+      // Accumulate the full original chunk for transcript fidelity
+      this.rawText += markdown;
+
+      if (before) {
+        // Send the portion before the break on the current stream
+        try {
+          await this.streamer!.append({ markdown_text: before });
+          this.bytesInCurrentStream += before.length;
+          this.confirmedSentBytes += before.length;
+        } catch (error) {
+          // If even this partial send fails, fall through to the
+          // normal error handling below with the full chunk
+        }
+      }
+
       await this.rollover();
+
+      // Continue with the remainder (or the full chunk if no break found)
+      const remainder = before ? after : markdown;
+      // Separator bytes (\n\n or \n) stripped by splitAtBreak
+      const separatorBytes = before ? markdown.length - before.length - after.length : 0;
+      if (remainder) {
+        try {
+          await this.streamer!.append({ markdown_text: remainder });
+          this.bytesInCurrentStream += remainder.length;
+          this.confirmedSentBytes += remainder.length + separatorBytes;
+        } catch (error) {
+          if (isRecoverableStreamError(error) && !this.stopped) {
+            logger.warn(
+              { bytesInCurrentStream: this.bytesInCurrentStream },
+              'Stream hit recoverable error after smart rollover; rolling over again',
+            );
+            await this.rollover();
+            try {
+              await this.streamer!.append({ markdown_text: remainder });
+              this.bytesInCurrentStream += remainder.length;
+              this.confirmedSentBytes += remainder.length + separatorBytes;
+            } catch (retryError) {
+              logger.error({ error: retryError }, 'Append failed again after rollover; giving up');
+              throw retryError;
+            }
+          } else {
+            logger.error({ error }, 'Failed to append remainder after smart rollover');
+            throw error;
+          }
+        }
+      }
+      return;
     }
 
     this.rawText += markdown;
@@ -605,6 +654,36 @@ function isNotInStreamingState(error: unknown): boolean {
  */
 function isRecoverableStreamError(error: unknown): boolean {
   return isMsgTooLong(error) || isNotInStreamingState(error);
+}
+
+/**
+ * Find the best break point in a text chunk for splitting a message.
+ * Prefers paragraph breaks (\n\n), falls back to single newlines (\n).
+ * Returns { before, after } where `before` goes to the current stream
+ * and `after` goes to the new stream. If no break is found, `before`
+ * is empty and `after` is the full text (force rollover).
+ */
+function splitAtBreak(text: string): { before: string; after: string } {
+  // Prefer paragraph break (double newline)
+  const paraIdx = text.lastIndexOf('\n\n');
+  if (paraIdx > 0) {
+    return {
+      before: text.slice(0, paraIdx),
+      after: text.slice(paraIdx + 2), // skip the \n\n
+    };
+  }
+
+  // Fall back to single newline
+  const lineIdx = text.lastIndexOf('\n');
+  if (lineIdx > 0) {
+    return {
+      before: text.slice(0, lineIdx),
+      after: text.slice(lineIdx + 1), // skip the \n
+    };
+  }
+
+  // No break found — whole chunk goes to the new stream
+  return { before: '', after: text };
 }
 
 /**
