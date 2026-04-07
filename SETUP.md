@@ -15,7 +15,7 @@ Claude will walk through each step, handle file creation, and tell you when it n
 Verify these are installed:
 
 ```bash
-node --version    # Node.js 20+
+node --version    # Node.js 22+
 pnpm --version    # pnpm
 claude --version  # Claude Code CLI
 ```

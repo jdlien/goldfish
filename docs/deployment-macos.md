@@ -6,10 +6,10 @@ Run Goldfish as a persistent service on macOS using launchd + cron.
 
 Goldfish has two runtime components:
 
-| Component | How it runs | Purpose |
-|-----------|------------|---------|
-| **Slack daemon** | launchd (always running) | Listens for Slack messages, spawns Claude sessions |
-| **Scheduler** | cron (every minute) | Reads `schedule.yaml`, fires due tasks (briefings, heartbeats, etc.) |
+| Component        | How it runs              | Purpose                                                   |
+| ---------------- | ------------------------ | --------------------------------------------------------- |
+| **Slack daemon** | launchd (always running) | Listens for Slack messages, spawns Claude sessions        |
+| **Scheduler**    | cron (every minute)      | Reads `schedule.yaml`, fires due tasks (heartbeats, etc.) |
 
 ### The scheduler (`schedule.yaml`)
 
@@ -32,7 +32,7 @@ the Slack listener — it needs launchd's `KeepAlive` for auto-restart on crash.
 
 ## Prerequisites
 
-- Node.js 20+ and pnpm
+- Node.js 22+ and pnpm
 - Claude Code CLI (`claude`) in PATH
 - Slack app configured (see main README)
 - `.env` file with Slack tokens and `GOLDFISH_WORKSPACE`
@@ -59,6 +59,7 @@ cp .env.example .env
 ```
 
 Required variables:
+
 - `SLACK_APP_TOKEN` — Slack Socket Mode app-level token (`xapp-1-...`)
 - `SLACK_BOT_TOKEN` — Slack bot OAuth token (`xoxb-...`)
 - `GOLDFISH_WORKSPACE` — Absolute path to your agent workspace (containing `CLAUDE.md`, `SOUL.md`, `IDENTITY.md`, etc.)
@@ -199,7 +200,7 @@ equivalent) has two behaviors that surprise people coming from Linux cron:
 1. **It does not wake the machine.** If your Mac is asleep at 1:00 AM, the
    1:00 AM synthesis job is silently skipped.
 2. **It does not queue missed runs.** When the Mac wakes up at 9:00 AM, launchd
-   does *not* go back and fire the jobs it missed. They just wait for their
+   does _not_ go back and fire the jobs it missed. They just wait for their
    next scheduled window.
 
 Options if you need overnight jobs to run reliably:
@@ -226,7 +227,7 @@ has its own setup and is not covered here.
 ### `runs = 0` is not necessarily a bug
 
 If `launchctl print gui/$(id -u)/com.goldfish.daily-synthesis` shows
-`runs = 0`, that means the job hasn't fired *since it was loaded*. If you
+`runs = 0`, that means the job hasn't fired _since it was loaded_. If you
 loaded it after its scheduled time today, it's correctly waiting for
 tomorrow's window. Don't panic — check whether it had a chance to fire first.
 
@@ -267,12 +268,12 @@ a fresh node process each time and don't hold cached state.
 
 ## Logs
 
-| Service | stdout | stderr |
-|---------|--------|--------|
-| Daemon | `/tmp/goldfish-daemon.log` | `/tmp/goldfish-daemon-err.log` |
+| Service   | stdout                        | stderr                            |
+| --------- | ----------------------------- | --------------------------------- |
+| Daemon    | `/tmp/goldfish-daemon.log`    | `/tmp/goldfish-daemon-err.log`    |
 | Synthesis | `/tmp/goldfish-synthesis.log` | `/tmp/goldfish-synthesis-err.log` |
-| Index | `/tmp/goldfish-index.log` | `/tmp/goldfish-index-err.log` |
-| Scheduler | `/tmp/goldfish-schedule.log` | (stderr in same file) |
+| Index     | `/tmp/goldfish-index.log`     | `/tmp/goldfish-index-err.log`     |
+| Scheduler | `/tmp/goldfish-schedule.log`  | (stderr in same file)             |
 
 > **Tip:** Logs are in `/tmp/` which macOS clears on reboot. For persistent
 > logs, change the plist paths to `~/Library/Logs/goldfish/` and create the
@@ -281,10 +282,13 @@ a fresh node process each time and don't hold cached state.
 ## Troubleshooting
 
 **Daemon crashes immediately (exit code 1):**
+
 ```bash
 cat /tmp/goldfish-daemon-err.log
 ```
+
 Common causes:
+
 - Forgot to run `pnpm run build` — `dist/index.js` doesn't exist
 - Missing `.env` file or Slack tokens not set
 - Another process already connected to the same Slack Socket Mode token
@@ -295,6 +299,7 @@ That's SIGTERM — launchd sent a stop signal. Normal during restarts.
 `KeepAlive` will relaunch it within the `ThrottleInterval` (10s).
 
 **Scheduled jobs not firing:**
+
 - Confirm they're loaded: `launchctl list | grep goldfish`
 - Check `runs` counter: `launchctl print gui/$(id -u)/com.goldfish.<name> | grep runs`
 - If `runs = 0`, the job hasn't had a chance to fire yet since being loaded —
@@ -304,6 +309,7 @@ That's SIGTERM — launchd sent a stop signal. Normal during restarts.
 - Remember: LaunchAgents require an active login session
 
 **"Command not found" errors in scheduled jobs:**
+
 - Edit `launchd/goldfish-env.sh` to ensure your shell profile is sourced correctly
 - Smoke-test: `bash -c 'source ~/code/goldfish/launchd/goldfish-env.sh && which claude && which node && which pnpm'`
 
@@ -314,6 +320,7 @@ and `Heartbeat OK — no message sent`. Only genuinely urgent items produce a
 Slack message.
 
 **Permission issues:**
+
 ```bash
 chmod +x scripts/*.sh launchd/goldfish-env.sh
 ```

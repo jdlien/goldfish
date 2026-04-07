@@ -54,7 +54,7 @@ One daemon. One cron entry. One config file. That's the whole thing. See [`docs/
 
 ## Quick Start
 
-**Prerequisites:** Node.js 20+, [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code), a Slack app with Socket Mode enabled.
+**Prerequisites:** Node.js 22+, [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code), a Slack app with Socket Mode enabled.
 
 This project uses [pnpm](https://pnpm.io/). If you don't have it, enable it via Node's built-in Corepack:
 
