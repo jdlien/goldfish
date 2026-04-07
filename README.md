@@ -14,7 +14,7 @@ This gives you:
 ## Why This Exists
 
 I was a happy user of OpenClaw, but over time, I discovered issues:
-- It complex to set up and keep working
+- It was complex to set up and keep working
 - It had many bugs. While it is open source, the popularity of the project means that my pull requests were unlikely to get merged in.
 - Anthropic stopped allowing SSO auth with third-party harnesses like OpenClaw, so it became enormously expensive.
 - Claude Code "just works" with a Claude Max subscription, OpenClaw had reliability issues with Claude models.

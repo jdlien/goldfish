@@ -160,15 +160,12 @@ cp launchd/*.plist ~/Library/LaunchAgents/
 # Load the daemon (starts immediately and on every login)
 launchctl load ~/Library/LaunchAgents/com.goldfish.daemon.plist
 
-# Load scheduled jobs
+# Load maintenance jobs
 launchctl load ~/Library/LaunchAgents/com.goldfish.daily-synthesis.plist
 launchctl load ~/Library/LaunchAgents/com.goldfish.index-memory.plist
-launchctl load ~/Library/LaunchAgents/com.goldfish.morning-briefing.plist
-launchctl load ~/Library/LaunchAgents/com.goldfish.heartbeat.plist
-
-# Optional: evening exploration session
-launchctl load ~/Library/LaunchAgents/com.goldfish.exploration.plist
 ```
+
+Proactive outreach (morning briefings, heartbeats, explorations) is handled by the scheduler — see [`docs/deployment-macos.md`](docs/deployment-macos.md) for setting up `schedule.yaml` with a single cron entry.
 
 ### Verify
 

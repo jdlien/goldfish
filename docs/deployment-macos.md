@@ -141,12 +141,7 @@ elsewhere, edit the plist files before copying. If you don't want the optional
 services, omit them from the copy:
 
 ```bash
-# Core services only — skip exploration
-cp launchd/com.goldfish.daemon.plist ~/Library/LaunchAgents/
-cp launchd/com.goldfish.daily-synthesis.plist ~/Library/LaunchAgents/
-cp launchd/com.goldfish.index-memory.plist ~/Library/LaunchAgents/
-cp launchd/com.goldfish.morning-briefing.plist ~/Library/LaunchAgents/
-cp launchd/com.goldfish.heartbeat.plist ~/Library/LaunchAgents/
+cp launchd/*.plist ~/Library/LaunchAgents/
 ```
 
 ### 5. Load the services
@@ -155,15 +150,14 @@ cp launchd/com.goldfish.heartbeat.plist ~/Library/LaunchAgents/
 # Start the daemon (starts immediately and on every login)
 launchctl load ~/Library/LaunchAgents/com.goldfish.daemon.plist
 
-# Load the scheduled jobs (they'll fire at their scheduled times)
+# Load the maintenance jobs
 launchctl load ~/Library/LaunchAgents/com.goldfish.daily-synthesis.plist
 launchctl load ~/Library/LaunchAgents/com.goldfish.index-memory.plist
-launchctl load ~/Library/LaunchAgents/com.goldfish.morning-briefing.plist
-launchctl load ~/Library/LaunchAgents/com.goldfish.heartbeat.plist
-
-# Optional: exploration (only if you copied it in step 4)
-launchctl load ~/Library/LaunchAgents/com.goldfish.exploration.plist
 ```
+
+Proactive outreach (morning briefings, heartbeats, explorations) is handled by
+the scheduler — see "The scheduler" section above for setting up `schedule.yaml`
+with a single cron entry.
 
 ### 6. Verify
 
@@ -185,8 +179,7 @@ scheduled job without waiting for its next fire time, use
 
 ## The `initiate` pattern
 
-Four of the services (`heartbeat`, `morning-briefing`, `exploration`, plus a
-`weekly` type that doesn't have a plist yet) share a single CLI entrypoint:
+All proactive outreach types share a single CLI entrypoint:
 
 ```bash
 pnpm run cli initiate -t <type>
@@ -201,8 +194,8 @@ shared. Adding a new scheduled proactive task is usually:
 
 1. Add a new case to `buildPrompt()` in `src/cli/initiate.ts`
 2. Add the new type to the `InitiateOptions.type` union
-3. Write a new plist that invokes `pnpm run cli initiate -t <yourtype>`
-4. `pnpm run build` and `launchctl load` the plist
+3. Add a task entry in `schedule.yaml`
+4. `pnpm run build`
 
 No new scripts, no new runner code, no new database tables. The heartbeat has
 one special behavior — if the agent's response starts with `HEARTBEAT_OK`, no
@@ -294,7 +287,7 @@ has its own setup and is not covered here.
 
 ### `runs = 0` is not necessarily a bug
 
-If `launchctl print gui/$(id -u)/com.goldfish.morning-briefing` shows
+If `launchctl print gui/$(id -u)/com.goldfish.daily-synthesis` shows
 `runs = 0`, that means the job hasn't fired *since it was loaded*. If you
 loaded it after its scheduled time today, it's correctly waiting for
 tomorrow's window. Don't panic — check whether it had a chance to fire first.
@@ -341,9 +334,7 @@ a fresh node process each time and don't hold cached state.
 | Daemon | `/tmp/goldfish-daemon.log` | `/tmp/goldfish-daemon-err.log` |
 | Synthesis | `/tmp/goldfish-synthesis.log` | `/tmp/goldfish-synthesis-err.log` |
 | Index | `/tmp/goldfish-index.log` | `/tmp/goldfish-index-err.log` |
-| Briefing | `/tmp/goldfish-briefing.log` | `/tmp/goldfish-briefing-err.log` |
-| Heartbeat | `/tmp/goldfish-heartbeat.log` | `/tmp/goldfish-heartbeat-err.log` |
-| Exploration | `/tmp/goldfish-exploration.log` | `/tmp/goldfish-exploration-err.log` |
+| Scheduler | `/tmp/goldfish-schedule.log` | (stderr in same file) |
 
 > **Tip:** Logs are in `/tmp/` which macOS clears on reboot. For persistent
 > logs, change the plist paths to `~/Library/Logs/goldfish/` and create the

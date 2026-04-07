@@ -63,8 +63,7 @@ launchd/
 ├── goldfish-env.sh             # Shell env bootstrap for launchd
 ├── com.goldfish.daemon.plist   # Bot daemon (KeepAlive)
 ├── com.goldfish.daily-synthesis.plist  # 1:00 AM
-├── com.goldfish.index-memory.plist     # 1:15 AM
-└── com.goldfish.morning-briefing.plist # 8:30 AM
+└── com.goldfish.index-memory.plist     # 1:15 AM
 ```
 
 ## How It Works
@@ -113,8 +112,23 @@ launchctl stop com.goldfish.daemon    # KeepAlive auto-restarts with new code
 - TypeScript strict mode, ESM (`"type": "module"`)
 - Kysely for SQL (no raw queries outside migrations)
 - Pino for structured logging
-- Commit messages: `type: description` (feat, fix, docs, chore)
 - No test mocking of SQLite — use real in-memory databases
+
+## Git Conventions
+
+**Atomic commits.** Each commit should be one logical change — a feature, a bugfix, a refactor. Don't bundle unrelated changes. Don't split a single logical change across commits unless it's genuinely separable (e.g., a migration + the code that uses it).
+
+**Conventional commit messages:** `type: concise description`
+
+Types: `feat`, `fix`, `refactor`, `docs`, `chore`, `test`, `style`, `perf`, `ci`
+
+Examples:
+- `feat: add Slack app manifest for one-click setup`
+- `fix: prevent duplicate messages on reconnect`
+- `refactor: extract session lookup into SessionService`
+- `docs: add deployment troubleshooting section`
+
+Keep the subject line under 72 characters. Use the body (separated by a blank line) for _why_, not _what_ — the diff shows what changed.
 
 
 ## Project Task Tracking
