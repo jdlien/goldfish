@@ -163,6 +163,8 @@ Edit `launchd/com.goldfish.daemon.plist` — update the `WorkingDirectory` with 
 <string>/Users/YOURUSERNAME/code/goldfish</string>
 ```
 
+Do the same for `launchd/com.goldfish.scheduler.plist`.
+
 ### Install and start
 
 ```bash
@@ -172,9 +174,11 @@ cp launchd/*.plist ~/Library/LaunchAgents/
 # Load the daemon (starts immediately and on every login)
 launchctl load ~/Library/LaunchAgents/com.goldfish.daemon.plist
 
+# Load the scheduler (fires every 60s, runs due tasks from schedule.yaml)
+launchctl load ~/Library/LaunchAgents/com.goldfish.scheduler.plist
 ```
 
-All scheduled tasks (briefings, heartbeats, maintenance) run through `schedule.yaml` with a single cron entry — see [`docs/deployment-macos.md`](docs/deployment-macos.md).
+All scheduled tasks (briefings, heartbeats, maintenance) run through `schedule.yaml` — see [`docs/deployment-macos.md`](docs/deployment-macos.md).
 
 ### Verify
 

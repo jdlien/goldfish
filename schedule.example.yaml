@@ -10,7 +10,7 @@
 #   cron:    "0 10-17 * * 1-5"                         — raw cron (overrides above)
 #
 # Run with: goldfish schedule run
-# Cron:     * * * * * cd /path/to/goldfish && node dist/index.js schedule run
+# Driven by: launchd agent com.goldfish.scheduler (every 60s)
 #
 # Copy this file to schedule.yaml and fill in your channel IDs.
 # Find channel IDs: click the channel name in Slack → scroll to the bottom of the modal.

@@ -50,7 +50,7 @@ schedule.yaml  → schedule run (cron, every minute)
                → index-memory (1:15 AM)                      → rebuilds FTS5     → memory/search.sqlite
 ```
 
-One daemon. One cron entry. One config file. That's the whole thing. See [`docs/deployment-macos.md`](docs/deployment-macos.md) for the full setup.
+Two launchd agents. One config file. That's the whole thing. See [`docs/deployment-macos.md`](docs/deployment-macos.md) for the full setup.
 
 ## Quick Start
 
@@ -131,11 +131,7 @@ goldfish schedule run --dry-run         # Preview what would run
 
 ## Scheduling
 
-Goldfish uses a single `schedule.yaml` to run tasks on a schedule — briefings, heartbeats, maintenance, whatever you need. One cron entry drives all of it:
-
-```bash
-* * * * * cd /path/to/goldfish && node dist/index.js schedule run >> /tmp/goldfish-schedule.log 2>&1
-```
+Goldfish uses a single `schedule.yaml` to run tasks on a schedule — briefings, heartbeats, maintenance, whatever you need. A launchd agent fires every 60 seconds and runs any due tasks:
 
 ```yaml
 tasks:

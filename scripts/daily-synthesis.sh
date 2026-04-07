@@ -66,14 +66,15 @@ PROMPT_EOF
 )
 
 # Run from /tmp to avoid CLAUDE.md auto-discovery (prevents persona loading).
-# --allowedTools "": disable all tools so Claude produces pure text (no tool loops).
+# --system-prompt: override default system prompt to prevent tool loops.
+# --max-turns 10: generous budget — with no tools available, it should use 1.
 cd /tmp
 claude -p "$PROMPT" \
   --model "$MODEL" \
-  --max-turns 1 \
+  --max-turns 10 \
   --dangerously-skip-permissions \
   --output-format text \
-  --allowedTools "" \
+  --system-prompt "You are a memory synthesis assistant. Output ONLY the daily log in markdown. Do not use any tools. Do not ask questions. Just write the synthesis." \
   > "${DAILY_FILE}.tmp"
 cd - > /dev/null
 

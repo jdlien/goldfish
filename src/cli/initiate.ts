@@ -45,7 +45,8 @@ export function buildPrompt(options: InitiateOptions): string {
 
   if (reminder) {
     return [
-      'You are sending a scheduled reminder to the user via Slack.',
+      'You are preparing a scheduled reminder for the user.',
+      'Do NOT use any Slack tools to post messages — just write the reminder as your text response.',
       'Be brief and helpful. Deliver this reminder:',
       '',
       reminder,
@@ -77,7 +78,10 @@ function getDefaultPrompt(type: string): string {
     case 'heartbeat':
       return [
         'This is a quiet background heartbeat check.',
-        'You are NOT initiating a conversation. You are checking if anything needs the user\'s attention.',
+        'You are checking if anything needs the user\'s attention.',
+        '',
+        'IMPORTANT: Do NOT use any Slack tools to post messages. Do NOT call slack_send_message.',
+        'Just write your response as text. The delivery system handles posting to Slack.',
         '',
         '## What to check',
         '',
@@ -105,7 +109,10 @@ function getDefaultPrompt(type: string): string {
     case 'exploration':
       return [
         'This is your evening self-study session.',
-        'You are posting an exploration to Slack — the user may or may not engage with it.',
+        'Write an exploration — the system will deliver it to Slack for you.',
+        '',
+        'IMPORTANT: Do NOT use any Slack tools to post messages. Do NOT call slack_send_message.',
+        'Just write the exploration as your text response. The delivery system handles posting.',
         '',
         '## What to do',
         '',
@@ -121,7 +128,7 @@ function getDefaultPrompt(type: string): string {
         'Length: 800-2000 words. This is a deep dive, not a tweet.',
         'End with "New Questions This Opened" — what you want to explore next.',
         '',
-        '## After posting',
+        '## After writing',
         '',
         `Save the full exploration to memory/explorations/${today}-<topic-slug>.md`,
         'Update memory/explorations/TOPICS.md with a one-line entry.',
@@ -131,8 +138,11 @@ function getDefaultPrompt(type: string): string {
       // morning and weekly
       const sessionType = type === 'morning' ? 'Morning Check-in' : 'Weekly Review';
       return [
-        `You are initiating a proactive ${sessionType} via Slack.`,
-        'You are sending the FIRST message — the user has not said anything yet.',
+        `You are preparing a proactive ${sessionType}.`,
+        'Write the check-in as your text response — the delivery system will post it to Slack.',
+        '',
+        'IMPORTANT: Do NOT use any Slack tools to post messages. Do NOT call slack_send_message.',
+        'The user has not said anything yet — you are initiating.',
         '',
         '## What to do',
         '',

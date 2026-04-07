@@ -1,6 +1,6 @@
 # Goldfish — Architecture
 
-_A Claude Code-native agent runtime. One daemon, one cron entry._
+_A Claude Code-native agent runtime. Two launchd agents. One config file._
 
 ---
 
@@ -8,7 +8,7 @@ _A Claude Code-native agent runtime. One daemon, one cron entry._
 
 OpenClaw is an orchestration layer that routes messages to models like Claude. But Claude Code already _is_ an orchestration layer — it has tools, hooks, session persistence, project context, and `--resume`. We don't need to build an agent runtime from scratch. We need a **thin Slack adapter** that gets messages to Claude Code and a **memory pipeline** that captures what happens.
 
-**The infrastructure is minimal: one daemon, one cron entry, one config file.** The depth is in what sits on top — session continuity across threads, a four-layer memory pipeline with full-text search, proactive outreach, browser automation, and a CLI for everything else. Claude Code does the orchestration; Goldfish gives it a home.
+**The infrastructure is minimal: two launchd agents and one config file.** The depth is in what sits on top — session continuity across threads, a four-layer memory pipeline with full-text search, proactive outreach, browser automation, and a CLI for everything else. Claude Code does the orchestration; Goldfish gives it a home.
 
 ---
 
@@ -166,11 +166,7 @@ sqlite3 memory/search.sqlite \
 
 ## Component 3: The Scheduler
 
-All scheduled tasks are defined in `schedule.yaml` and driven by a single cron entry that runs every minute:
-
-```
-* * * * * cd /path/to/goldfish && node dist/index.js schedule run
-```
+All scheduled tasks are defined in `schedule.yaml` and driven by a launchd agent (`com.goldfish.scheduler`) that fires every 60 seconds.
 
 The scheduler loads the config, checks which tasks are due, and fires them. Lock files prevent overlapping runs of the same task. There are two categories:
 

@@ -160,69 +160,91 @@ export async function scheduleRun(options: ScheduleRunOptions): Promise<void> {
 
 /**
  * Check and fire any due reminders from the database.
+ *
+ * Note: initiate() calls closeDb() internally, which kills the singleton
+ * connection. We work around this by collecting all due reminders first,
+ * closing the DB ourselves, then firing. After all fires complete, we
+ * re-open the DB to clean up (delete one-shots, mark recurring as fired).
  */
 async function fireReminders(dryRun?: boolean, now: Date = new Date()): Promise<void> {
+  const nowMs = now.getTime();
+
+  // Phase 1: Collect due reminders
   const db = await initDb();
   const repo = new SqliteRepo(db);
 
-  try {
-    const nowMs = now.getTime();
+  const dueResult = await repo.getDueReminders(nowMs);
+  const recurringResult = await repo.getRecurringReminders();
+  await closeDb();
 
-    // One-shot reminders: fire_at <= now
-    const dueResult = await repo.getDueReminders(nowMs);
-    if (dueResult.ok) {
-      for (const reminder of dueResult.value) {
-        if (dryRun) {
-          console.log(chalk.yellow(`[DRY RUN] Would fire reminder: ${reminder.message}`));
-          continue;
-        }
+  // Filter recurring to only those matching now
+  const dueOneShots = dueResult.ok ? dueResult.value : [];
+  const dueRecurring = recurringResult.ok
+    ? recurringResult.value.filter((r) => r.cron && cronMatchesNow(r.cron, now))
+    : [];
 
-        logger.info({ reminderId: reminder.id }, 'Firing one-shot reminder');
-        console.log(chalk.bold(`🔔 Firing reminder: ${reminder.message}`));
+  if (dueOneShots.length === 0 && dueRecurring.length === 0) return;
 
-        try {
-          await initiate({
-            type: 'heartbeat',
-            channel: reminder.channel,
-            reminder: reminder.message,
-          });
-          await repo.deleteReminder(reminder.id);
-        } catch (err) {
-          logger.error({ reminderId: reminder.id, error: err }, 'Failed to fire reminder');
-          console.error(chalk.red(`✗ Reminder failed: ${reminder.message}`), err);
-        }
-      }
+  // Phase 2: Fire reminders (each initiate() call opens/closes its own DB)
+  const firedOneShotIds: string[] = [];
+  const firedRecurringIds: string[] = [];
+
+  for (const reminder of dueOneShots) {
+    if (dryRun) {
+      console.log(chalk.yellow(`[DRY RUN] Would fire reminder: ${reminder.message}`));
+      continue;
     }
 
-    // Recurring reminders: check cron match
-    const recurringResult = await repo.getRecurringReminders();
-    if (recurringResult.ok) {
-      for (const reminder of recurringResult.value) {
-        if (!reminder.cron) continue;
-        if (!cronMatchesNow(reminder.cron, now)) continue;
+    logger.info({ reminderId: reminder.id }, 'Firing one-shot reminder');
+    console.log(chalk.bold(`🔔 Firing reminder: ${reminder.message}`));
 
-        if (dryRun) {
-          console.log(chalk.yellow(`[DRY RUN] Would fire recurring reminder: ${reminder.message}`));
-          continue;
-        }
-
-        logger.info({ reminderId: reminder.id, cron: reminder.cron }, 'Firing recurring reminder');
-        console.log(chalk.bold(`🔔 Firing recurring reminder: ${reminder.message}`));
-
-        try {
-          await initiate({
-            type: 'heartbeat',
-            channel: reminder.channel,
-            reminder: reminder.message,
-          });
-          await repo.markReminderFired(reminder.id, nowMs);
-        } catch (err) {
-          logger.error({ reminderId: reminder.id, error: err }, 'Failed to fire recurring reminder');
-          console.error(chalk.red(`✗ Recurring reminder failed: ${reminder.message}`), err);
-        }
-      }
+    try {
+      await initiate({
+        type: 'heartbeat',
+        channel: reminder.channel,
+        reminder: reminder.message,
+      });
+      firedOneShotIds.push(reminder.id);
+    } catch (err) {
+      logger.error({ reminderId: reminder.id, error: err }, 'Failed to fire reminder');
+      console.error(chalk.red(`✗ Reminder failed: ${reminder.message}`), err);
     }
-  } finally {
+  }
+
+  for (const reminder of dueRecurring) {
+    if (dryRun) {
+      console.log(chalk.yellow(`[DRY RUN] Would fire recurring reminder: ${reminder.message}`));
+      continue;
+    }
+
+    logger.info({ reminderId: reminder.id, cron: reminder.cron }, 'Firing recurring reminder');
+    console.log(chalk.bold(`🔔 Firing recurring reminder: ${reminder.message}`));
+
+    try {
+      await initiate({
+        type: 'heartbeat',
+        channel: reminder.channel,
+        reminder: reminder.message,
+      });
+      firedRecurringIds.push(reminder.id);
+    } catch (err) {
+      logger.error({ reminderId: reminder.id, error: err }, 'Failed to fire recurring reminder');
+      console.error(chalk.red(`✗ Recurring reminder failed: ${reminder.message}`), err);
+    }
+  }
+
+  // Phase 3: Clean up — re-open DB, delete one-shots, update recurring
+  if (firedOneShotIds.length > 0 || firedRecurringIds.length > 0) {
+    const cleanupDb = await initDb();
+    const cleanupRepo = new SqliteRepo(cleanupDb);
+
+    for (const id of firedOneShotIds) {
+      await cleanupRepo.deleteReminder(id);
+    }
+    for (const id of firedRecurringIds) {
+      await cleanupRepo.markReminderFired(id, nowMs);
+    }
+
     await closeDb();
   }
 }

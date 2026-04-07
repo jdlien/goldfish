@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.goldfish.scheduler</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>-c</string>
+        <string>source ~/code/goldfish/launchd/goldfish-env.sh &amp;&amp; cd ~/code/goldfish &amp;&amp; node dist/index.js schedule run</string>
+    </array>
+
+    <!-- SETUP: Replace with the absolute path to your goldfish repo.
+         launchd cannot expand ~ or $HOME here — use a full path. -->
+    <key>WorkingDirectory</key>
+    <string>/Users/YOURUSERNAME/code/goldfish</string>
+
+    <key>StartInterval</key>
+    <integer>60</integer>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/goldfish-schedule.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/goldfish-schedule-err.log</string>
+</dict>
+</plist>

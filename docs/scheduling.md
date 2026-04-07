@@ -1,11 +1,11 @@
 # Scheduling
 
-Goldfish can run tasks on a schedule — proactive Slack messages, nightly maintenance, whatever you need. Everything is defined in one `schedule.yaml` file and driven by a single cron entry.
+Goldfish can run tasks on a schedule — proactive Slack messages, nightly maintenance, whatever you need. Everything is defined in one `schedule.yaml` file and driven by a single launchd agent.
 
 ## How it Works
 
 ```
-cron (every minute) → goldfish schedule run → reads schedule.yaml → fires matching tasks
+launchd (every 60s) → goldfish schedule run → reads schedule.yaml → fires matching tasks
 ```
 
 Each minute, Goldfish loads `schedule.yaml`, checks which tasks are due, and runs them. Lock files prevent overlapping runs of the same task.
@@ -20,17 +20,16 @@ Copy the example and edit it:
 cp schedule.example.yaml schedule.yaml
 ```
 
-### 2. Add one cron entry
+### 2. Install the scheduler LaunchAgent
 
 ```bash
-crontab -e
+cp launchd/com.goldfish.scheduler.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.goldfish.scheduler.plist
 ```
 
-```
-* * * * * cd /path/to/goldfish && node dist/index.js schedule run >> /tmp/goldfish-schedule.log 2>&1
-```
+That's it. One LaunchAgent runs everything.
 
-That's it. One cron entry runs everything.
+> **Why launchd instead of cron?** The scheduler spawns `claude` subprocesses that need access to your Claude Code OAuth session, which is stored in the macOS Keychain. LaunchAgents run in your user's GUI session and have keychain access; cron jobs don't.
 
 ## Task Types
 
@@ -175,7 +174,7 @@ The daily synthesis task has a 15-minute execution timeout. The stale lock timeo
 
 ## Timezone
 
-All times are in the **system timezone** of the machine running the cron entry. There's no timezone field in `schedule.yaml` — if you need UTC, set your system timezone or use raw `cron` expressions.
+All times are in the **system timezone** of the machine running the scheduler. There's no timezone field in `schedule.yaml` — if you need UTC, set your system timezone or use raw `cron` expressions.
 
 ## Input Limits
 

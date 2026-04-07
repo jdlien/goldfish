@@ -9,19 +9,17 @@ Goldfish has two runtime components:
 | Component        | How it runs              | Purpose                                                   |
 | ---------------- | ------------------------ | --------------------------------------------------------- |
 | **Slack daemon** | launchd (always running) | Listens for Slack messages, spawns Claude sessions        |
-| **Scheduler**    | cron (every minute)      | Reads `schedule.yaml`, fires due tasks (heartbeats, etc.) |
+| **Scheduler**    | launchd (every 60s)      | Reads `schedule.yaml`, fires due tasks (heartbeats, etc.) |
 
 ### The Scheduler (`schedule.yaml`)
 
-All scheduled tasks — proactive Slack messages and nightly maintenance — are defined in `schedule.yaml` and driven by a single cron entry:
-
-```
-* * * * * cd ~/code/goldfish && node dist/index.js schedule run >> /tmp/goldfish-schedule.log 2>&1
-```
+All scheduled tasks — proactive Slack messages and nightly maintenance — are defined in `schedule.yaml` and driven by a single LaunchAgent (`com.goldfish.scheduler`) that fires every 60 seconds.
 
 See [`scheduling.md`](scheduling.md) for the full reference (task types, timing syntax, all fields, locking behavior).
 
-The daemon runs via a launchd plist (`com.goldfish.daemon`) which provides `KeepAlive` for auto-restart on crash. All other tasks (briefings, heartbeats, synthesis, indexing) run through the scheduler.
+The daemon runs via a separate launchd plist (`com.goldfish.daemon`) which provides `KeepAlive` for auto-restart on crash. All other tasks (briefings, heartbeats, synthesis, indexing) run through the scheduler.
+
+> **Why launchd for the scheduler?** The scheduler spawns `claude` subprocesses that authenticate via the macOS Keychain (Claude Max OAuth). LaunchAgents run in your user's GUI session and have keychain access; cron jobs don't.
 
 ## Prerequisites
 
@@ -91,14 +89,11 @@ launchctl load ~/Library/LaunchAgents/com.goldfish.daemon.plist
 
 ### 6. Set Up the Scheduler
 
-Add one cron entry to drive all scheduled tasks:
+Install the scheduler LaunchAgent:
 
 ```bash
-crontab -e
-```
-
-```
-* * * * * cd ~/code/goldfish && node dist/index.js schedule run >> /tmp/goldfish-schedule.log 2>&1
+cp launchd/com.goldfish.scheduler.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.goldfish.scheduler.plist
 ```
 
 Edit `schedule.yaml` (created by `pnpm cli init`) to set your channel IDs and preferred times. See [`scheduling.md`](scheduling.md) for the full reference.
@@ -194,10 +189,9 @@ and your jobs will fail with "command not found."
 
 ### Sleeping Machines Miss Scheduled Tasks
 
-This is the single biggest thing to know. Neither cron nor launchd will wake a sleeping Mac:
+launchd won't wake a sleeping Mac. If your Mac is asleep at 1:00 AM, the scheduler doesn't run and the 1:00 AM synthesis is silently skipped.
 
-1. **Cron does not wake the machine.** If your Mac is asleep at 1:00 AM, the scheduler doesn't run, and the 1:00 AM synthesis is silently skipped.
-2. **Missed runs are not queued.** When the Mac wakes up at 9:00 AM, cron does _not_ go back and fire the jobs it missed. They just wait for their next scheduled minute.
+However, unlike cron, launchd's `StartInterval` **does fire immediately on wake** — so the scheduler will run as soon as the Mac wakes up. The missed specific-time tasks (like the 1 AM synthesis) won't retroactively fire, but the next scheduler tick will catch any due reminders or tasks whose window includes the current time.
 
 Options if you need overnight jobs to run reliably:
 
@@ -286,7 +280,7 @@ That's SIGTERM — launchd sent a stop signal. Normal during restarts.
 
 **Scheduled tasks not firing:**
 
-- Verify cron is running: `crontab -l` should show the `schedule run` entry
+- Verify the scheduler is loaded: `launchctl list | grep goldfish` should show `com.goldfish.scheduler`
 - Check the scheduler log: `cat /tmp/goldfish-schedule.log`
 - Preview what would run: `pnpm cli schedule run --dry-run`
 - List all tasks and their cron expressions: `pnpm cli schedule list`
@@ -296,7 +290,7 @@ That's SIGTERM — launchd sent a stop signal. Normal during restarts.
 **"Command not found" errors in scheduled jobs:**
 
 - Edit `launchd/goldfish-env.sh` to ensure your shell profile is sourced correctly
-- Smoke-test: `bash -c 'source ~/code/goldfish/launchd/goldfish-env.sh && which claude && which node && which pnpm'`
+- Smoke-test: `zsh -c 'source ~/code/goldfish/launchd/goldfish-env.sh && which claude && which node && which pnpm'`
 
 **Heartbeat runs but nothing appears in Slack:**
 That's probably working as designed. The heartbeat stays silent when nothing
