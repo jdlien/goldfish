@@ -11,7 +11,7 @@ Goldfish has two runtime components:
 | **Slack daemon** | launchd (always running) | Listens for Slack messages, spawns Claude sessions        |
 | **Scheduler**    | cron (every minute)      | Reads `schedule.yaml`, fires due tasks (heartbeats, etc.) |
 
-### The scheduler (`schedule.yaml`)
+### The Scheduler (`schedule.yaml`)
 
 All scheduled tasks — proactive Slack messages and nightly maintenance — are defined in `schedule.yaml` and driven by a single cron entry:
 
@@ -21,14 +21,7 @@ All scheduled tasks — proactive Slack messages and nightly maintenance — are
 
 See [`scheduling.md`](scheduling.md) for the full reference (task types, timing syntax, all fields, locking behavior).
 
-### Legacy: individual launchd plists
-
-> **Note:** The launchd plists in `launchd/` predate the scheduler and are no
-> longer the recommended approach for scheduled tasks. They still work if you
-> prefer launchd, but `schedule.yaml` + one cron entry is simpler to manage.
-
-The daemon plist (`com.goldfish.daemon`) is still the recommended way to run
-the Slack listener — it needs launchd's `KeepAlive` for auto-restart on crash.
+The daemon runs via a launchd plist (`com.goldfish.daemon`) which provides `KeepAlive` for auto-restart on crash. All other tasks (briefings, heartbeats, synthesis, indexing) run through the scheduler.
 
 ## Prerequisites
 
@@ -39,7 +32,7 @@ the Slack listener — it needs launchd's `KeepAlive` for auto-restart on crash.
 
 ## Setup
 
-### 1. Install dependencies and build
+### 1. Install Dependencies and Build
 
 ```bash
 cd ~/code/goldfish
@@ -51,7 +44,7 @@ pnpm run build    # IMPORTANT: The daemon runs compiled JS, not tsx
 > plist runs `node dist/index.js start` (compiled output), not the tsx dev
 > server. If you skip the build step, the daemon will fail with MODULE_NOT_FOUND.
 
-### 2. Configure environment
+### 2. Configure Environment
 
 ```bash
 cp .env.example .env
@@ -62,10 +55,18 @@ Required variables:
 
 - `SLACK_APP_TOKEN` — Slack Socket Mode app-level token (`xapp-1-...`)
 - `SLACK_BOT_TOKEN` — Slack bot OAuth token (`xoxb-...`)
-- `GOLDFISH_WORKSPACE` — Absolute path to your agent workspace (containing `CLAUDE.md`, `SOUL.md`, `IDENTITY.md`, etc.)
-- `GOLDFISH_DM_CHANNEL_ID` — Slack channel ID where proactive messages (briefings, heartbeat, exploration) are posted
+- `GOLDFISH_WORKSPACE` — Absolute path to your agent workspace
+- `GOLDFISH_DM_CHANNEL_ID` — Default Slack channel for proactive messages (briefings, heartbeats, explorations)
 
-### 3. Test the connection
+### 3. Set Up Your Workspace
+
+```bash
+pnpm cli init
+```
+
+The init wizard creates your agent workspace — identity files, memory directories, prompt templates, and `schedule.yaml`. If you're migrating from OpenClaw, it will detect your `AGENTS.md` and offer to use it as the base for `CLAUDE.md`.
+
+### 4. Test the Connection
 
 ```bash
 pnpm cli auth test
@@ -73,50 +74,54 @@ pnpm cli auth test
 
 You should see your workspace name, bot name, and Claude CLI version.
 
-### 4. Copy LaunchAgent plists
+### 5. Install the Daemon Plist
+
+The daemon plist keeps the Slack listener running and auto-restarts on crash.
 
 ```bash
-cp launchd/*.plist ~/Library/LaunchAgents/
+cp launchd/com.goldfish.daemon.plist ~/Library/LaunchAgents/
 ```
 
-The plists reference `~/code/goldfish` as the install path. If your repo is
-elsewhere, edit the plist files before copying. If you don't want the optional
-services, omit them from the copy:
-
-```bash
-cp launchd/*.plist ~/Library/LaunchAgents/
-```
-
-### 5. Load the services
+The plist references `~/code/goldfish` as the install path. If your repo is elsewhere, edit the plist before copying.
 
 ```bash
 # Start the daemon (starts immediately and on every login)
 launchctl load ~/Library/LaunchAgents/com.goldfish.daemon.plist
 ```
 
-All scheduled tasks — proactive outreach (morning briefings, heartbeats, explorations)
-and maintenance (daily synthesis, memory indexing) — are handled by `schedule.yaml`
-with a single cron entry. See "The scheduler" section above.
+### 6. Set Up the Scheduler
 
-### 6. Verify
+Add one cron entry to drive all scheduled tasks:
 
 ```bash
-# Check loaded services (daemon should show a PID; scheduled jobs will show "-")
+crontab -e
+```
+
+```
+* * * * * cd ~/code/goldfish && node dist/index.js schedule run >> /tmp/goldfish-schedule.log 2>&1
+```
+
+Edit `schedule.yaml` (created by `pnpm cli init`) to set your channel IDs and preferred times. See [`scheduling.md`](scheduling.md) for the full reference.
+
+### 7. Verify
+
+```bash
+# Check the daemon is running
 launchctl list | grep goldfish
 
 # Watch the daemon logs
 tail -f /tmp/goldfish-daemon.log
 
-# Inspect a scheduled job's state (runs count, last exit code, next fire time)
-launchctl print gui/$(id -u)/com.goldfish.heartbeat
+# Preview what the scheduler would run right now
+pnpm cli schedule run --dry-run
+
+# List all scheduled tasks and their cron expressions
+pnpm cli schedule list
 ```
 
-You should see "Goldfish started!" and "Listening for messages..." in the
-daemon log. Send a DM to the bot in Slack to confirm it responds. To test a
-scheduled job without waiting for its next fire time, use
-`launchctl start com.goldfish.<service>` (see "Managing services" below).
+You should see "Goldfish started!" and "Listening for messages..." in the daemon log. Send a DM to the bot in Slack to confirm it responds.
 
-## The `initiate` pattern
+## The `initiate` Pattern
 
 All proactive outreach types share a single CLI entrypoint:
 
@@ -126,13 +131,10 @@ pnpm cli initiate -t <type>
 
 Supported types: `heartbeat`, `morning`, `weekly`, `exploration`.
 
-Each type has its own prompt template in `src/cli/initiate.ts` that tells the
-agent what to do. The plumbing (loading environment, spawning Claude, posting
-to Slack, creating a session so thread replies continue the conversation) is
-shared. Adding a new scheduled proactive task is usually:
+Each type looks for a prompt template in your workspace's `prompts/` directory first (e.g. `prompts/morning.md`), falling back to built-in defaults in `src/cli/initiate.ts`. The plumbing (loading environment, spawning Claude, posting to Slack, creating a session so thread replies continue the conversation) is shared. Adding a new scheduled proactive task is usually:
 
-1. Add a new case to `buildPrompt()` in `src/cli/initiate.ts`
-2. Add the new type to the `InitiateOptions.type` union
+1. Create a prompt file in `prompts/<type>.md` in your workspace (or add a case to `buildPrompt()` in `src/cli/initiate.ts`)
+2. Add the new type to the `InitiateOptions.type` union in `src/cli/initiate.ts`
 3. Add a task entry in `schedule.yaml`
 4. `pnpm run build`
 
@@ -141,7 +143,7 @@ one special behavior — if the agent's response starts with `HEARTBEAT_OK`, no
 Slack message is sent at all — but everything else routes through the same
 path.
 
-## The exploration pattern
+## The Exploration Pattern
 
 `exploration` is listed as "optional" because it's the least universal of the
 scheduled jobs, but the underlying pattern is broadly useful: **a daily
@@ -161,11 +163,9 @@ But the same mechanism can be repurposed:
 - **Journal** — reflect on the day's transcripts and write a private note
 - **Creative writing** — daily short-form output on a rotating prompt
 
-To adapt exploration for a different purpose, edit the `exploration` case in
-`buildPrompt()` inside `src/cli/initiate.ts` and rewrite the prompt to tell the
-agent what you want it to do. The plist stays the same.
+To adapt exploration for a different purpose, create `prompts/exploration.md` in your workspace directory (or edit the `exploration` case in `buildPrompt()` inside `src/cli/initiate.ts`) and rewrite the prompt to tell the agent what you want it to do.
 
-## Shell environment (`goldfish-env.sh`)
+## Shell Environment (`goldfish-env.sh`)
 
 launchd runs with a minimal PATH that doesn't include tools installed via
 Homebrew, fnm, pyenv, etc. Every Goldfish plist invokes its command through
@@ -190,18 +190,14 @@ bash -c 'source ~/code/goldfish/launchd/goldfish-env.sh && which claude && which
 All three binaries should resolve. If any don't, that's what launchd will see,
 and your jobs will fail with "command not found."
 
-## launchd gotchas
+## Launchd Gotchas
 
-### Calendar jobs do NOT wake a sleeping machine, and missed runs are NOT queued
+### Sleeping Machines Miss Scheduled Tasks
 
-This is the single biggest thing to know. `StartCalendarInterval` (the cron
-equivalent) has two behaviors that surprise people coming from Linux cron:
+This is the single biggest thing to know. Neither cron nor launchd will wake a sleeping Mac:
 
-1. **It does not wake the machine.** If your Mac is asleep at 1:00 AM, the
-   1:00 AM synthesis job is silently skipped.
-2. **It does not queue missed runs.** When the Mac wakes up at 9:00 AM, launchd
-   does _not_ go back and fire the jobs it missed. They just wait for their
-   next scheduled window.
+1. **Cron does not wake the machine.** If your Mac is asleep at 1:00 AM, the scheduler doesn't run, and the 1:00 AM synthesis is silently skipped.
+2. **Missed runs are not queued.** When the Mac wakes up at 9:00 AM, cron does _not_ go back and fire the jobs it missed. They just wait for their next scheduled minute.
 
 Options if you need overnight jobs to run reliably:
 
@@ -212,26 +208,17 @@ Options if you need overnight jobs to run reliably:
 - **Reschedule for waking hours.** Move the jobs to a time the machine is
   reliably on (e.g. 9:00 AM instead of 1:00 AM). This is the cheapest option
   and what most personal deployments should do.
-- **Use `StartInterval` instead of `StartCalendarInterval`.** Interval-based
-  jobs (every N seconds since load) tolerate sleep — they fire as soon as the
-  machine wakes and the interval has elapsed. The heartbeat plist uses this
-  approach. Downside: you give up "once a day at a specific time" semantics.
+### LaunchAgents Require an Active Login Session
 
-### LaunchAgents require an active login session
+The daemon plist runs as a LaunchAgent under your user, so it stops when you're logged out. If you want Goldfish running while nobody is logged in, you'd need to move the plist to `/Library/LaunchDaemons/` and run it as a system service — that has its own setup and is not covered here.
 
-LaunchAgents run under your user, so they stop firing when you're logged out.
-If you want Goldfish running while nobody is logged in, you'd need to move the
-plists to `/Library/LaunchDaemons/` and run them as a system service — that
-has its own setup and is not covered here.
+### `runs = 0` Is Not Necessarily a Bug
 
-### `runs = 0` is not necessarily a bug
+If `launchctl print gui/$(id -u)/com.goldfish.daemon` shows
+`runs = 0`, that means the daemon hasn't fired _since it was loaded_. If you
+just loaded it, give it a moment. Don't panic — check whether it had a chance to start.
 
-If `launchctl print gui/$(id -u)/com.goldfish.daily-synthesis` shows
-`runs = 0`, that means the job hasn't fired _since it was loaded_. If you
-loaded it after its scheduled time today, it's correctly waiting for
-tomorrow's window. Don't panic — check whether it had a chance to fire first.
-
-## Managing services
+## Managing Services
 
 ```bash
 # Stop the daemon (launchd will restart it due to KeepAlive)
@@ -247,13 +234,13 @@ launchctl load ~/Library/LaunchAgents/com.goldfish.daemon.plist
 launchctl unload ~/Library/LaunchAgents/com.goldfish.daemon.plist
 launchctl load ~/Library/LaunchAgents/com.goldfish.daemon.plist
 
-# Run a scheduled job manually (for testing — does not affect its schedule)
-launchctl start com.goldfish.daily-synthesis
-launchctl start com.goldfish.heartbeat
-launchctl start com.goldfish.exploration
+# Run a scheduled task manually (for testing)
+pnpm cli initiate -t morning
+pnpm cli initiate -t heartbeat
+pnpm cli initiate -t exploration
 ```
 
-## After code changes
+## After Code Changes
 
 When you update goldfish source code:
 
@@ -268,12 +255,10 @@ a fresh node process each time and don't hold cached state.
 
 ## Logs
 
-| Service   | stdout                        | stderr                            |
-| --------- | ----------------------------- | --------------------------------- |
-| Daemon    | `/tmp/goldfish-daemon.log`    | `/tmp/goldfish-daemon-err.log`    |
-| Synthesis | `/tmp/goldfish-synthesis.log` | `/tmp/goldfish-synthesis-err.log` |
-| Index     | `/tmp/goldfish-index.log`     | `/tmp/goldfish-index-err.log`     |
-| Scheduler | `/tmp/goldfish-schedule.log`  | (stderr in same file)             |
+| Service   | Log location                  |
+| --------- | ----------------------------- |
+| Daemon    | `/tmp/goldfish-daemon.log` (stdout), `/tmp/goldfish-daemon-err.log` (stderr) |
+| Scheduler | `/tmp/goldfish-schedule.log` (all scheduled tasks — briefings, synthesis, indexing) |
 
 > **Tip:** Logs are in `/tmp/` which macOS clears on reboot. For persistent
 > logs, change the plist paths to `~/Library/Logs/goldfish/` and create the
@@ -298,15 +283,14 @@ Common causes:
 That's SIGTERM — launchd sent a stop signal. Normal during restarts.
 `KeepAlive` will relaunch it within the `ThrottleInterval` (10s).
 
-**Scheduled jobs not firing:**
+**Scheduled tasks not firing:**
 
-- Confirm they're loaded: `launchctl list | grep goldfish`
-- Check `runs` counter: `launchctl print gui/$(id -u)/com.goldfish.<name> | grep runs`
-- If `runs = 0`, the job hasn't had a chance to fire yet since being loaded —
-  see "launchd gotchas" above
-- If `runs > 0` but nothing happens, check the log files in `/tmp/`
-- Test manually: `launchctl start com.goldfish.<name>` forces an immediate run
-- Remember: LaunchAgents require an active login session
+- Verify cron is running: `crontab -l` should show the `schedule run` entry
+- Check the scheduler log: `cat /tmp/goldfish-schedule.log`
+- Preview what would run: `pnpm cli schedule run --dry-run`
+- List all tasks and their cron expressions: `pnpm cli schedule list`
+- Test a task manually: `pnpm cli initiate -t morning`
+- Check for stale lock files in `.schedule-locks/` (auto-cleaned after 20 minutes)
 
 **"Command not found" errors in scheduled jobs:**
 
