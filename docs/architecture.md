@@ -1,6 +1,6 @@
 # Goldfish — Architecture
 
-_A Claude Code-native agent runtime. One daemon, a few cron jobs, zero ACP._
+_A Claude Code-native agent runtime. One daemon, one cron entry, zero ACP._
 
 ---
 
@@ -8,7 +8,7 @@ _A Claude Code-native agent runtime. One daemon, a few cron jobs, zero ACP._
 
 OpenClaw is an orchestration layer that routes messages to Claude. But Claude Code already _is_ an orchestration layer — it has tools, hooks, session persistence, project context, and `--resume`. We don't need to build an agent runtime from scratch. We need a **thin Slack adapter** that gets messages to Claude Code and a **memory pipeline** that captures what happens.
 
-**Architecture: One daemon + cron jobs. That's the whole thing.**
+**Architecture: One daemon + one cron entry + a config file. That's the whole thing.**
 
 ---
 
@@ -23,7 +23,7 @@ OpenClaw is an orchestration layer that routes messages to Claude. But Claude Co
                ▼
 ┌─────────────────────────────────────────────────┐
 │           SLACK BOT DAEMON                      │
-│  (Node.js, long-running, ~300 lines)            │
+│  (Node.js, long-running, ~640 lines)             │
 │                                                 │
 │  • Receives Slack messages                      │
 │  • Maps threads → Claude sessions (SQLite)      │
@@ -60,13 +60,17 @@ OpenClaw is an orchestration layer that routes messages to Claude. But Claude Co
                ▲
                │ reads + writes
 ┌─────────────────────────────────────────────────┐
-│           CRON JOBS (launchd on macOS)          │
+│     SCHEDULER (cron, every minute)              │
+│     Reads schedule.yaml, fires matching tasks   │
 │                                                 │
-│  • Daily synthesis (1 AM) — Sonnet              │
-│  • FTS5 index rebuild (1:15 AM)                 │
-│  • Morning briefing (8:30 AM) — post to Slack   │
+│  Initiate tasks → Claude → Slack:               │
+│  • Morning briefing (8:30 AM)                   │
 │  • Hourly heartbeat — silent unless urgent      │
 │  • Optional: evening exploration session        │
+│                                                 │
+│  Maintenance tasks (no Slack):                  │
+│  • Daily synthesis (1 AM)                       │
+│  • FTS5 index rebuild (1:15 AM)                 │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -160,22 +164,33 @@ sqlite3 memory/search.sqlite \
 
 ---
 
-## Component 3: Cron Jobs
+## Component 3: The Scheduler
 
-All cron jobs are simple scripts that either:
+All scheduled tasks are defined in `schedule.yaml` and driven by a single cron entry that runs every minute:
 
-- Spawn `claude` with a specific prompt and post output to Slack, or
-- Run a non-AI script (indexer, cleanup)
+```
+* * * * * cd /path/to/goldfish && node dist/index.js schedule run
+```
 
-On macOS, these run via launchd (see `docs/deployment-macos.md`). The schedule:
+The scheduler loads the config, checks which tasks are due, and fires them. Lock files prevent overlapping runs of the same task. There are two categories:
 
-| Time | Script | Purpose |
-|------|--------|---------|
-| 1:00 AM daily | `daily-synthesis.sh` | Consolidate transcripts → daily log (Sonnet) |
-| 1:15 AM daily | `index-memory.sh` | Rebuild FTS5 search index |
-| 8:30 AM weekdays | `initiate -t morning` | Morning briefing → Slack |
-| Hourly | `initiate -t heartbeat` | Silent check; pings only on urgent items |
-| 6:00 PM daily (optional) | `initiate -t exploration` | Agent picks a topic and goes deep |
+**Initiate tasks** spawn Claude and post results to Slack:
+
+| Type | Default Schedule | Purpose |
+|------|-----------------|---------|
+| `morning` | 8:30 AM weekdays | Morning briefing — reads FOCUS.md, checks tools, suggests priorities |
+| `heartbeat` | Hourly, work hours | Silent check; pings only on urgent items |
+| `exploration` | 6:00 PM daily | Agent picks a topic and writes a deep dive |
+| `weekly` | Sunday 9 AM | Weekly review |
+
+**Maintenance tasks** run system operations (no Slack):
+
+| Type | Default Schedule | Purpose |
+|------|-----------------|---------|
+| `daily-synthesis` | 1:00 AM | Consolidate transcripts → daily log |
+| `index-memory` | 1:15 AM | Rebuild FTS5 search index |
+
+All timing, channels, and models are configurable per-task. See [`scheduling.md`](scheduling.md) for the full reference.
 
 ---
 
@@ -194,10 +209,10 @@ Goldfish includes a stealth Chromium browser via Patchright (a Playwright fork w
 | Component | Cost |
 |-----------|------|
 | Conversations | $0 (Claude Code on Max subscription) |
-| Daily synthesis | ~$0.10/day (Sonnet) ≈ $3/mo |
+| Daily synthesis | ~$0.10/day (Sonnet default, configurable) ≈ $3/mo |
 | Morning briefings | $0 (Max subscription) |
 | Heartbeats | $0 (Max subscription) |
-| FTS5 indexing | $0 (pure Python, no API) |
+| FTS5 indexing | $0 (TypeScript, no API) |
 | **Total** | **Max subscription + ~$3-5/mo** |
 
 ---
