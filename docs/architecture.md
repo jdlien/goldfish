@@ -1,14 +1,14 @@
 # Goldfish — Architecture
 
-_A Claude Code-native agent runtime. One daemon, one cron entry, zero ACP._
+_A Claude Code-native agent runtime. One daemon, one cron entry._
 
 ---
 
 ## The Fundamental Insight
 
-OpenClaw is an orchestration layer that routes messages to Claude. But Claude Code already _is_ an orchestration layer — it has tools, hooks, session persistence, project context, and `--resume`. We don't need to build an agent runtime from scratch. We need a **thin Slack adapter** that gets messages to Claude Code and a **memory pipeline** that captures what happens.
+OpenClaw is an orchestration layer that routes messages to models like Claude. But Claude Code already _is_ an orchestration layer — it has tools, hooks, session persistence, project context, and `--resume`. We don't need to build an agent runtime from scratch. We need a **thin Slack adapter** that gets messages to Claude Code and a **memory pipeline** that captures what happens.
 
-**Architecture: One daemon + one cron entry + a config file. That's the whole thing.**
+**The infrastructure is minimal: one daemon, one cron entry, one config file.** The depth is in what sits on top — session continuity across threads, a four-layer memory pipeline with full-text search, proactive outreach, browser automation, and a CLI for everything else. Claude Code does the orchestration; Goldfish gives it a home.
 
 ---
 
