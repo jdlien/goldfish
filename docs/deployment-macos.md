@@ -14,7 +14,7 @@ Goldfish has two runtime components:
 ### The scheduler (`schedule.yaml`)
 
 Instead of managing individual launchd plists for each scheduled task, Goldfish
-uses a single config file — the same pattern as Laravel's `schedule:run`:
+uses a single config file — the same pattern as Laravel's `schedule:run` but with subcommand syntax (`schedule run`):
 
 ```yaml
 # schedule.yaml

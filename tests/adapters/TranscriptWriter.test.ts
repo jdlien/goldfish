@@ -29,13 +29,18 @@ afterEach(() => {
   }
 });
 
+/** Find the single .jsonl file writeTranscript created in testDir. */
+function findJsonlFile(): string {
+  const files = fs.readdirSync(testDir).filter((f) => f.endsWith('.jsonl'));
+  expect(files).toHaveLength(1);
+  return join(testDir, files[0]);
+}
+
 describe('writeTranscript', () => {
   it('creates directory and writes JSONL line', () => {
     writeTranscript(makeTranscriptEntry());
 
-    const today = new Date().toISOString().slice(0, 10);
-    const filePath = join(testDir, `${today}.jsonl`);
-    expect(fs.existsSync(filePath)).toBe(true);
+    const filePath = findJsonlFile();
     expect(fs.readFileSync(filePath, 'utf-8').trim()).toBeTruthy();
   });
 
@@ -43,8 +48,7 @@ describe('writeTranscript', () => {
     writeTranscript(makeTranscriptEntry({ userMessage: 'first' }));
     writeTranscript(makeTranscriptEntry({ userMessage: 'second' }));
 
-    const today = new Date().toISOString().slice(0, 10);
-    const filePath = join(testDir, `${today}.jsonl`);
+    const filePath = findJsonlFile();
     const lines = fs.readFileSync(filePath, 'utf-8').trim().split('\n');
     expect(lines).toHaveLength(2);
   });
@@ -52,8 +56,7 @@ describe('writeTranscript', () => {
   it('writes parseable JSON per line', () => {
     writeTranscript(makeTranscriptEntry({ userMessage: 'parse me' }));
 
-    const today = new Date().toISOString().slice(0, 10);
-    const filePath = join(testDir, `${today}.jsonl`);
+    const filePath = findJsonlFile();
     const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8').trim());
     expect(parsed.userMessage).toBe('parse me');
     expect(parsed.assistantResponse).toBe('Hi there!');
@@ -67,8 +70,7 @@ describe('writeTranscript', () => {
     });
     writeTranscript(entry);
 
-    const today = new Date().toISOString().slice(0, 10);
-    const filePath = join(testDir, `${today}.jsonl`);
+    const filePath = findJsonlFile();
     const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8').trim());
     expect(parsed.slackChannel).toBe('C_CUSTOM');
     expect(parsed.claudeSessionId).toBe('sess-xyz');

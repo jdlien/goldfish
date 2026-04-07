@@ -4,7 +4,7 @@
  * Reads schedule.yaml and runs any tasks due this minute.
  * Designed to be called every minute by a single cron entry:
  *
- *   * * * * * cd /path/to/goldfish && node dist/index.js schedule:run
+ *   * * * * * cd /path/to/goldfish && node dist/index.js schedule run
  *
  * Uses a lock file to prevent overlapping runs.
  */
