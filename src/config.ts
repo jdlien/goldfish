@@ -6,6 +6,7 @@
  */
 
 import { join } from 'path';
+import { existsSync } from 'fs';
 import { homedir } from 'os';
 
 /** The agent workspace — where identity files, memory, and tools live */
@@ -70,3 +71,33 @@ export const STREAM_UPDATE_INTERVAL_MS = Number(
  * per-tool timeline chunks are skipped.
  */
 export const SHOW_TOOLS = process.env.GOLDFISH_SHOW_TOOLS !== 'false';
+
+/**
+ * Validate that the workspace directory exists and contains a CLAUDE.md.
+ * Call this at the start of commands that need the workspace (start, initiate).
+ * Returns null if valid, or an error message string.
+ */
+export function validateWorkspace(): string | null {
+  if (!existsSync(WORKSPACE_PATH)) {
+    return [
+      `Workspace directory not found: ${WORKSPACE_PATH}`,
+      '',
+      'To fix this, either:',
+      '  1. Run: goldfish init        (creates a workspace from the starter template)',
+      '  2. Set GOLDFISH_WORKSPACE in your .env to an existing directory',
+      '',
+      'See SETUP.md for the full setup guide.',
+    ].join('\n');
+  }
+
+  if (!existsSync(join(WORKSPACE_PATH, 'CLAUDE.md'))) {
+    return [
+      `Workspace exists but is missing CLAUDE.md: ${WORKSPACE_PATH}`,
+      '',
+      'CLAUDE.md defines your agent\'s identity and is required.',
+      'Run: goldfish init    (to scaffold a workspace with a starter CLAUDE.md)',
+    ].join('\n');
+  }
+
+  return null;
+}

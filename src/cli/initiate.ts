@@ -10,7 +10,7 @@ import { SqliteRepo } from '../adapters/SqliteRepo.js';
 import { initDb, closeDb } from '../db/index.js';
 import { createChildLogger } from '../lib/logger.js';
 import { formatForSlack } from '../lib/slackFormatter.js';
-import { WORKSPACE_PATH } from '../config.js';
+import { WORKSPACE_PATH, validateWorkspace } from '../config.js';
 
 const logger = createChildLogger('cli:initiate');
 
@@ -162,6 +162,13 @@ export async function initiate(options: InitiateOptions): Promise<void> {
   }
 
   console.log(chalk.bold(`\n🐟 Initiating ${type} check-in...\n`));
+
+  // Validate workspace before doing anything else
+  const workspaceError = validateWorkspace();
+  if (workspaceError) {
+    console.log(chalk.red(workspaceError));
+    process.exit(1);
+  }
 
   const db = await initDb();
   const repo = new SqliteRepo(db);

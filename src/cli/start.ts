@@ -17,6 +17,7 @@ import {
   NATIVE_STREAMING_ENABLED,
   MAX_ATTACHMENTS_PER_MESSAGE,
   SHOW_TOOLS,
+  validateWorkspace,
 } from '../config.js';
 
 interface SlackDmMessage {
@@ -40,6 +41,13 @@ let slackClient: SlackBoltClient | null = null;
  */
 export async function start(): Promise<void> {
   console.log(chalk.bold('\n🐟 Starting Goldfish...\n'));
+
+  // Validate workspace before doing anything else
+  const workspaceError = validateWorkspace();
+  if (workspaceError) {
+    console.log(chalk.red(workspaceError));
+    process.exit(1);
+  }
 
   // Initialize database
   console.log(chalk.dim('Initializing database...'));
