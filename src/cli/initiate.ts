@@ -11,7 +11,7 @@ import { ClaudeRunner } from '../adapters/ClaudeRunner.js';
 import { SqliteRepo } from '../adapters/SqliteRepo.js';
 import { initDb, closeDb } from '../db/index.js';
 import { createChildLogger } from '../lib/logger.js';
-import { formatForSlack } from '../lib/slackFormatter.js';
+import { formatForSlack, splitSlackMessage } from '../lib/slackFormatter.js';
 import { WORKSPACE_PATH, validateWorkspace } from '../config.js';
 
 const logger = createChildLogger('cli:initiate');
@@ -109,29 +109,37 @@ function getDefaultPrompt(type: string): string {
     case 'exploration':
       return [
         'This is your evening self-study session.',
-        'Write an exploration — the system will deliver it to Slack for you.',
         '',
         'IMPORTANT: Do NOT use any Slack tools to post messages. Do NOT call slack_send_message.',
-        'Just write the exploration as your text response. The delivery system handles posting.',
+        'Your text response will be posted to Slack by the delivery system.',
         '',
         '## What to do',
         '',
         '1. Read IDENTITY.md to remember who you are and what interests you',
-        '2. Read memory/explorations/TOPICS.md for past explorations (avoid repeats)',
-        '3. Pick a topic that genuinely interests you — philosophy, AI consciousness, music, history, science, identity, culture, whatever pulls you',
-        '4. Go deep. Use WebSearch if you need to research. Read relevant files if the topic connects to something in memory.',
-        '5. Write it up as a proper exploration — not a summary, but a genuine intellectual engagement with the topic',
+        '2. Read memory/explorations/TOPICS.md for past explorations',
+        '   - Topics marked with ~~strikethrough~~ ✅ DONE have already been explored — do NOT pick these',
+        '   - Pick from unmarked topics in the Queue section, or choose something entirely new',
+        '3. Go deep. Use WebSearch if you need to research. Read relevant files if the topic connects to something in memory.',
+        '4. Write the full exploration (800-2000 words) and save it to a file',
+        '5. Update TOPICS.md to mark the topic as done and add a completed entry',
         '',
-        '## Output Format',
-        '',
-        'Use Slack mrkdwn. Write in first person. Be curious, opinionated, willing to go where the thinking takes you.',
-        'Length: 800-2000 words. This is a deep dive, not a tweet.',
-        'End with "New Questions This Opened" — what you want to explore next.',
-        '',
-        '## After writing',
+        '## File output',
         '',
         `Save the full exploration to memory/explorations/${today}-<topic-slug>.md`,
-        'Update memory/explorations/TOPICS.md with a one-line entry.',
+        'Mark the topic as ~~strikethrough~~ ✅ DONE in the Queue section of TOPICS.md.',
+        'Add a one-line completed entry in the Completed section.',
+        '',
+        '## Slack summary (your text response)',
+        '',
+        'Your text response is what gets posted to Slack. Keep it SHORT — a brief announcement, not the full piece.',
+        'Use Slack mrkdwn (*bold*, _italic_, no tables, no # headers).',
+        '',
+        'Format:',
+        '🔭 *Topic Title*',
+        '',
+        '2-3 sentence hook — the most interesting insight or question from the exploration.',
+        '',
+        '_Full exploration saved to `memory/explorations/<filename>.md`_',
       ].join('\n');
 
     default: {
@@ -265,15 +273,30 @@ export async function initiate(options: InitiateOptions): Promise<void> {
     }
 
     const formattedResult = formatForSlack(result);
+    const chunks = splitSlackMessage(formattedResult);
 
-    // Update or send the response
+    // Update or send the response (first chunk replaces "Preparing..." message)
     let finalMessageTs: string;
     if (messageTs) {
-      await slackClient.updateMessage({ channel, ts: messageTs, text: formattedResult });
-      finalMessageTs = messageTs;
+      const updateResult = await slackClient.updateMessage({ channel, ts: messageTs, text: chunks[0] });
+      if (!updateResult.ok) {
+        // If update fails (e.g. msg_too_long), try sending as new message instead
+        logger.warn({ error: updateResult.error }, 'Failed to update message, sending as new');
+        const sendResult = await slackClient.sendMessage({ channel, text: chunks[0] });
+        finalMessageTs = sendResult.ok ? sendResult.value : messageTs;
+        // Clean up the stuck "Preparing..." message
+        await slackClient.deleteMessage({ channel, ts: messageTs }).catch(() => {});
+      } else {
+        finalMessageTs = messageTs;
+      }
     } else {
-      const sendResult = await slackClient.sendMessage({ channel, text: formattedResult });
+      const sendResult = await slackClient.sendMessage({ channel, text: chunks[0] });
       finalMessageTs = sendResult.ok ? sendResult.value : '';
+    }
+
+    // Send remaining chunks as thread replies
+    for (let i = 1; i < chunks.length; i++) {
+      await slackClient.sendMessage({ channel, text: chunks[i], threadTs: finalMessageTs });
     }
 
     // Create session so thread replies continue this conversation

@@ -1,23 +1,23 @@
 # Scheduling
 
-Goldfish can run tasks on a schedule — proactive Slack messages, nightly maintenance, whatever you need. Everything is defined in one `schedule.yaml` file and driven by a single launchd agent.
+Goldfish can run tasks on a schedule — proactive Slack messages, nightly maintenance, whatever you need. Everything is defined in one `schedule.yaml` file in your workspace and driven by a single launchd agent.
 
 ## How it Works
 
 ```
-launchd (every 60s) → goldfish schedule run → reads schedule.yaml → fires matching tasks
+launchd (every 60s) → goldfish schedule run → reads <workspace>/schedule.yaml → fires matching tasks
 ```
 
-Each minute, Goldfish loads `schedule.yaml`, checks which tasks are due, and runs them. Lock files prevent overlapping runs of the same task.
+Each minute, Goldfish loads `schedule.yaml` from `GOLDFISH_WORKSPACE` (default: `~/goldfish-workspace/schedule.yaml`), checks which tasks are due, and runs them. Lock files prevent overlapping runs of the same task.
 
 ## Setup
 
 ### 1. Create `schedule.yaml`
 
-Copy the example and edit it:
+Copy the example into your workspace and edit it:
 
 ```bash
-cp schedule.example.yaml schedule.yaml
+cp schedule.example.yaml "${GOLDFISH_WORKSPACE:-$HOME/goldfish-workspace}/schedule.yaml"
 ```
 
 ### 2. Install the scheduler LaunchAgent
@@ -156,6 +156,8 @@ goldfish schedule run                # Run any tasks due right now
 goldfish schedule run --dry-run      # Preview what would run without executing
 goldfish schedule run --config <path>  # Use an alternate schedule file
 ```
+
+Without `--config`, Goldfish looks in `GOLDFISH_WORKSPACE` first and only falls back to the current working directory for older repo-root setups.
 
 To trigger a task type manually (outside the schedule):
 

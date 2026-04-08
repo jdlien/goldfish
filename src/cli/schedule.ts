@@ -18,6 +18,7 @@ import { runMaintenanceTask } from './maintenance.js';
 import { initDb, closeDb } from '../db/index.js';
 import { SqliteRepo } from '../adapters/SqliteRepo.js';
 import { createChildLogger } from '../lib/logger.js';
+import { WORKSPACE_PATH } from '../config.js';
 
 const logger = createChildLogger('cli:schedule');
 
@@ -79,11 +80,13 @@ function releaseLock(taskName: string): void {
 /**
  * Find the schedule.yaml config file.
  */
-function resolveConfigPath(configOpt?: string): string {
+export function resolveConfigPath(configOpt?: string): string {
   if (configOpt) return configOpt;
 
-  // Check common locations
+  // Prefer the user workspace, but keep the repo cwd as a fallback for older setups.
   const candidates = [
+    join(WORKSPACE_PATH, 'schedule.yaml'),
+    join(WORKSPACE_PATH, 'schedule.yml'),
     join(process.cwd(), 'schedule.yaml'),
     join(process.cwd(), 'schedule.yml'),
   ];
@@ -93,7 +96,8 @@ function resolveConfigPath(configOpt?: string): string {
   }
 
   throw new Error(
-    'No schedule.yaml found. Create one or specify --config path.'
+    `No schedule.yaml found. Checked ${WORKSPACE_PATH} and ${process.cwd()}. ` +
+    `Create ${join(WORKSPACE_PATH, 'schedule.yaml')} or specify --config path.`
   );
 }
 

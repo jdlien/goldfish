@@ -9,11 +9,11 @@ Goldfish has two runtime components:
 | Component        | How it runs              | Purpose                                                   |
 | ---------------- | ------------------------ | --------------------------------------------------------- |
 | **Slack daemon** | launchd (always running) | Listens for Slack messages, spawns Claude sessions        |
-| **Scheduler**    | launchd (every 60s)      | Reads `schedule.yaml`, fires due tasks (heartbeats, etc.) |
+| **Scheduler**    | launchd (every 60s)      | Reads `<workspace>/schedule.yaml`, fires due tasks (heartbeats, etc.) |
 
-### The Scheduler (`schedule.yaml`)
+### The Scheduler (`<workspace>/schedule.yaml`)
 
-All scheduled tasks — proactive Slack messages and nightly maintenance — are defined in `schedule.yaml` and driven by a single LaunchAgent (`com.goldfish.scheduler`) that fires every 60 seconds.
+All scheduled tasks — proactive Slack messages and nightly maintenance — are defined in `schedule.yaml` inside your workspace and driven by a single LaunchAgent (`com.goldfish.scheduler`) that fires every 60 seconds.
 
 See [`scheduling.md`](scheduling.md) for the full reference (task types, timing syntax, all fields, locking behavior).
 
@@ -96,7 +96,7 @@ cp launchd/com.goldfish.scheduler.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.goldfish.scheduler.plist
 ```
 
-Edit `schedule.yaml` (created by `pnpm cli init`) to set your channel IDs and preferred times. See [`scheduling.md`](scheduling.md) for the full reference.
+Edit `<workspace>/schedule.yaml` (created by `pnpm cli init`) to set your channel IDs and preferred times. See [`scheduling.md`](scheduling.md) for the full reference.
 
 ### 7. Verify
 

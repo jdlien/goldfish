@@ -174,11 +174,11 @@ cp launchd/*.plist ~/Library/LaunchAgents/
 # Load the daemon (starts immediately and on every login)
 launchctl load ~/Library/LaunchAgents/com.goldfish.daemon.plist
 
-# Load the scheduler (fires every 60s, runs due tasks from schedule.yaml)
+# Load the scheduler (fires every 60s, runs due tasks from your workspace schedule.yaml)
 launchctl load ~/Library/LaunchAgents/com.goldfish.scheduler.plist
 ```
 
-All scheduled tasks (briefings, heartbeats, maintenance) run through `schedule.yaml` — see [`docs/deployment-macos.md`](docs/deployment-macos.md).
+All scheduled tasks (briefings, heartbeats, maintenance) run through `~/goldfish-workspace/schedule.yaml` by default — see [`docs/deployment-macos.md`](docs/deployment-macos.md).
 
 ### Verify
 

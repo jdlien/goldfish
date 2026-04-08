@@ -143,7 +143,7 @@ const schedule = program.command('schedule').description('Manage scheduled tasks
 schedule
   .command('run')
   .description('Run any scheduled tasks due this minute')
-  .option('--config <path>', 'Path to schedule.yaml')
+  .option('--config <path>', 'Path to schedule.yaml (defaults to <workspace>/schedule.yaml)')
   .option('--dry-run', 'Show what would run without executing')
   .action((options) => {
     scheduleRun({
@@ -155,7 +155,7 @@ schedule
 schedule
   .command('list')
   .description('List all configured scheduled tasks')
-  .option('--config <path>', 'Path to schedule.yaml')
+  .option('--config <path>', 'Path to schedule.yaml (defaults to <workspace>/schedule.yaml)')
   .action((options) => {
     scheduleList({
       config: options.config,

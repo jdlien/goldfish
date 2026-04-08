@@ -192,14 +192,14 @@ export async function init(options: InitOptions): Promise<void> {
       }
     }
 
-    // Copy schedule.example.yaml → schedule.yaml (in the repo, not workspace)
-    const scheduleTarget = join(REPO_ROOT, 'schedule.yaml');
+    // Copy schedule.example.yaml → schedule.yaml in the user's workspace.
+    const scheduleTarget = join(workspacePath, 'schedule.yaml');
     const scheduleExample = join(REPO_ROOT, 'schedule.example.yaml');
     if (existsSync(scheduleTarget)) {
-      console.log(chalk.yellow(`  Skipped schedule.yaml (already exists)`));
+      console.log(chalk.yellow(`  Skipped schedule.yaml (already exists in workspace)`));
     } else if (existsSync(scheduleExample)) {
       copyFileSync(scheduleExample, scheduleTarget);
-      console.log(chalk.green(`  Created schedule.yaml — edit channel IDs and times`));
+      console.log(chalk.green(`  Created schedule.yaml in workspace — edit channel IDs and times`));
     }
 
     // Summary
@@ -211,7 +211,7 @@ export async function init(options: InitOptions): Promise<void> {
     } else {
       console.log(`  2. Edit ${chalk.bold('CLAUDE.md')} to customize ${name}'s personality`);
     }
-    console.log(`  3. Edit ${chalk.bold('schedule.yaml')} with your Slack channel IDs`);
+    console.log(`  3. Edit ${chalk.bold(join(workspacePath, 'schedule.yaml'))} with your Slack channel IDs`);
     console.log(`  4. Run ${chalk.bold('pnpm cli start')} and say hello\n`);
 
   } catch (error) {

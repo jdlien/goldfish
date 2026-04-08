@@ -46,7 +46,7 @@ Goldfish is compatible with OpenClaw agent workspaces. It can use the same ident
 Slack message  → Goldfish daemon → spawns claude CLI → reads agent config → responds
                                                      → saves transcript to JSONL
 
-schedule.yaml  → schedule run (every minute)
+<workspace>/schedule.yaml  → schedule run (every minute)
                → morning / heartbeat / exploration / weekly  → Claude → Slack
                → daily-synthesis (1 AM)                      → Claude summarizes → memory/YYYY-MM-DD.md
                → index-memory (1:15 AM)                      → rebuilds FTS5     → memory/search.sqlite
@@ -133,7 +133,7 @@ goldfish schedule run --dry-run         # Preview what would run
 
 ## Scheduling
 
-Goldfish uses a single `schedule.yaml` to define tasks on a schedule: briefings, heartbeats, maintenance, whatever you need. A launchd agent fires every 60 seconds and runs any due tasks:
+Goldfish uses a single `schedule.yaml` in your workspace (default: `~/goldfish-workspace/schedule.yaml`) to define scheduled tasks: briefings, heartbeats, maintenance, whatever you need. A launchd agent fires every 60 seconds and runs any due tasks:
 
 ```yaml
 tasks:
