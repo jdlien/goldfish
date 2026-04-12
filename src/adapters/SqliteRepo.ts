@@ -374,6 +374,80 @@ export class SqliteRepo {
     }
   }
 
+  // --- Session Synthesis ---
+
+  /**
+   * Find sessions that have been idle long enough to synthesize.
+   * Criteria: last_active_at older than idleMs, AND either never synthesized
+   * or has new activity since last synthesis.
+   */
+  async getSessionsNeedingSynthesis(
+    idleMs: number,
+    limit: number = 10
+  ): Promise<Result<Array<Session & { lastSynthesizedAt: number | null }>>> {
+    try {
+      const idleBefore = Date.now() - idleMs;
+      // Only look at sessions active in the last 48 hours (no point synthesizing ancient ones)
+      const recentAfter = Date.now() - 48 * 60 * 60 * 1000;
+
+      const rows = await this.db
+        .selectFrom('sessions')
+        .selectAll()
+        .where('last_active_at', '<', idleBefore)
+        .where('last_active_at', '>', recentAfter)
+        .where((eb) =>
+          eb.or([
+            eb('last_synthesized_at', 'is', null),
+            eb('last_active_at', '>', eb.ref('last_synthesized_at')),
+          ])
+        )
+        .orderBy('last_active_at', 'desc')
+        .limit(limit)
+        .execute();
+
+      const sessions = rows.map((row) => ({
+        id: row.id,
+        slackChannelId: row.slack_channel_id,
+        slackThreadTs: row.slack_thread_ts,
+        claudeSessionId: row.claude_session_id,
+        createdAt: row.created_at,
+        lastActiveAt: row.last_active_at,
+        lastSynthesizedAt: row.last_synthesized_at ?? null,
+      }));
+
+      return ok(sessions);
+    } catch (error) {
+      logger.error({ error }, 'Failed to get sessions needing synthesis');
+      return err(
+        createError(ErrorCodes.DATABASE_ERROR, 'Failed to get sessions needing synthesis', error)
+      );
+    }
+  }
+
+  /**
+   * Mark a session as synthesized at the given timestamp.
+   */
+  async markSessionSynthesized(
+    sessionId: string,
+    synthesizedAt: number = Date.now()
+  ): Promise<Result<void>> {
+    try {
+      await this.db
+        .updateTable('sessions')
+        .set({ last_synthesized_at: synthesizedAt })
+        .where('id', '=', sessionId)
+        .execute();
+
+      logger.debug({ sessionId, synthesizedAt }, 'Marked session synthesized');
+      return ok(undefined);
+    } catch (error) {
+      logger.error({ error, sessionId }, 'Failed to mark session synthesized');
+      return err(
+        createError(ErrorCodes.DATABASE_ERROR, 'Failed to mark session synthesized', error)
+      );
+    }
+  }
+
   // --- Reminders ---
 
   /**

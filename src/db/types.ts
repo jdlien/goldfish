@@ -11,6 +11,7 @@ export interface SessionTable {
   claude_session_id: string | null;
   created_at: number;
   last_active_at: number;
+  last_synthesized_at: number | null;
 }
 
 export interface MessageTable {

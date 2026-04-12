@@ -12,6 +12,8 @@ import { createChildLogger } from '../lib/logger.js';
 import { indexWorkspace } from '../lib/memoryIndexer.js';
 import { WORKSPACE_PATH, SEARCH_DB_PATH } from '../config.js';
 import type { ScheduleTask } from '../lib/scheduleParser.js';
+import { initDb, closeDb } from '../db/index.js';
+import { SqliteRepo } from '../adapters/SqliteRepo.js';
 
 const logger = createChildLogger('cli:maintenance');
 
@@ -24,6 +26,8 @@ export async function runMaintenanceTask(task: ScheduleTask): Promise<void> {
       return runDailySynthesis(task);
     case 'index-memory':
       return runIndexMemory();
+    case 'thread-synthesis':
+      return runThreadSynthesis(task);
     default:
       throw new Error(`Unknown maintenance task type: ${task.type}`);
   }
@@ -61,6 +65,79 @@ async function runDailySynthesis(task: ScheduleTask): Promise<void> {
     logger.error({ error: err }, 'Daily synthesis failed');
     throw err;
   }
+}
+
+/** Default idle threshold before synthesizing a thread (30 minutes) */
+const THREAD_IDLE_MS = Number(process.env.GOLDFISH_THREAD_IDLE_MS ?? 30 * 60 * 1000);
+
+/**
+ * Find idle sessions and synthesize their transcripts into daily memory files.
+ * Runs on a schedule (typically every few minutes). Finds threads that have been
+ * idle for THREAD_IDLE_MS and have unsynthesized activity, then runs a per-thread
+ * synthesis to append a summary to today's memory file.
+ */
+async function runThreadSynthesis(task: ScheduleTask): Promise<void> {
+  const db = await initDb();
+  const repo = new SqliteRepo(db);
+
+  const result = await repo.getSessionsNeedingSynthesis(THREAD_IDLE_MS);
+  await closeDb();
+
+  if (!result.ok) {
+    logger.error({ error: result.error }, 'Failed to query idle sessions');
+    return;
+  }
+
+  const sessions = result.value;
+  if (sessions.length === 0) return;
+
+  console.log(chalk.bold(`\n🧠 Thread synthesis: ${sessions.length} idle session(s) to process\n`));
+
+  const scriptPath = join(process.cwd(), 'scripts', 'thread-synthesis.sh');
+  const env: Record<string, string> = {
+    ...process.env as Record<string, string>,
+    GOLDFISH_WORKSPACE: WORKSPACE_PATH,
+  };
+
+  if (task.model) {
+    env.GOLDFISH_SYNTHESIS_MODEL = task.model;
+  }
+
+  for (const session of sessions) {
+    const sessionDesc = session.slackThreadTs
+      ? `${session.slackChannelId}:${session.slackThreadTs}`
+      : session.slackChannelId;
+
+    try {
+      logger.info({ sessionId: session.id, channel: sessionDesc }, 'Synthesizing idle thread');
+      console.log(chalk.dim(`  Synthesizing: ${sessionDesc}`));
+
+      execFileSync('bash', [
+        scriptPath,
+        session.id,
+        session.slackChannelId,
+        session.slackThreadTs ?? 'null',
+        session.lastSynthesizedAt?.toString() ?? 'null',
+      ], {
+        env,
+        encoding: 'utf-8',
+        timeout: 5 * 60 * 1000, // 5 minute timeout per thread
+      });
+
+      // Mark as synthesized
+      const markDb = await initDb();
+      const markRepo = new SqliteRepo(markDb);
+      await markRepo.markSessionSynthesized(session.id);
+      await closeDb();
+
+      console.log(chalk.green(`  ✓ ${sessionDesc}`));
+    } catch (err) {
+      logger.error({ error: err, sessionId: session.id }, 'Thread synthesis failed');
+      console.error(chalk.red(`  ✗ ${sessionDesc}: ${err}`));
+    }
+  }
+
+  console.log(chalk.green('\n✓ Thread synthesis pass complete\n'));
 }
 
 /**

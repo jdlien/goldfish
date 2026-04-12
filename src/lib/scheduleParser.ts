@@ -15,11 +15,11 @@ import { parse as parseYaml } from 'yaml';
 import { readFileSync } from 'fs';
 
 export type InitiateTaskType = 'morning' | 'weekly' | 'exploration' | 'heartbeat';
-export type MaintenanceTaskType = 'daily-synthesis' | 'index-memory';
+export type MaintenanceTaskType = 'daily-synthesis' | 'index-memory' | 'thread-synthesis';
 export type TaskType = InitiateTaskType | MaintenanceTaskType;
 
 export const INITIATE_TYPES: readonly string[] = ['morning', 'weekly', 'exploration', 'heartbeat'];
-export const MAINTENANCE_TYPES: readonly string[] = ['daily-synthesis', 'index-memory'];
+export const MAINTENANCE_TYPES: readonly string[] = ['daily-synthesis', 'index-memory', 'thread-synthesis'];
 
 export interface ScheduleTask {
   /** Task name — defaults to type if omitted */
