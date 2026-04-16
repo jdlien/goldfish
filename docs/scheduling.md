@@ -109,7 +109,7 @@ tasks:
 
   - type: daily-synthesis
     at: "1:00am"
-    model: claude-opus-4-6 # model override (default: claude-sonnet-4-6)
+    model: claude-opus-4-7 # model override (default: claude-sonnet-4-6)
 
   - type: index-memory
     at: "1:15am"

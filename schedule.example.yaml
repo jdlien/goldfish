@@ -48,7 +48,7 @@ tasks:
   - name: daily-synthesis
     type: daily-synthesis
     at: "1:00am"
-    # model: claude-opus-4-6   # optional model override (default: claude-sonnet-4-6)
+    # model: claude-opus-4-7   # optional model override (default: claude-sonnet-4-6)
 
   - name: index-memory
     type: index-memory

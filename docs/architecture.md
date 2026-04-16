@@ -143,7 +143,7 @@ At 1 AM, `scripts/daily-synthesis.sh`:
 3. Spawns `claude` with Sonnet to produce a consolidated daily narrative
 4. Writes to `memory/YYYY-MM-DD.md` (additive — doesn't overwrite what the agent already wrote)
 
-**Model choice:** Sonnet is the default — it's the quality floor for accurate memory consolidation. But if you're on a Max subscription, use Opus. Synthesis runs at 1 AM when your quota is idle, and the difference in quality is real — especially for emotionally nuanced or multi-topic days. Set `model: claude-opus-4-6` on the `daily-synthesis` task in `schedule.yaml`.
+**Model choice:** Sonnet is the default — it's the quality floor for accurate memory consolidation. But if you're on a Max subscription, use Opus. Synthesis runs at 1 AM when your quota is idle, and the difference in quality is real — especially for emotionally nuanced or multi-topic days. Set `model: claude-opus-4-7` on the `daily-synthesis` task in `schedule.yaml`.
 
 ### Layer 4: FTS5 Search Index
 

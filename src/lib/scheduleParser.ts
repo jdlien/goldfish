@@ -41,7 +41,7 @@ export interface ScheduleTask {
   context?: string;
   /** Whether this task is active (default: true) */
   enabled?: boolean;
-  /** Model override for this task (e.g. "claude-opus-4-6", "claude-sonnet-4-6") */
+  /** Model override for this task (e.g. "claude-opus-4-7", "claude-sonnet-4-6") */
   model?: string;
 }
 
