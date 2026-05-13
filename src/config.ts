@@ -35,6 +35,11 @@ export const MAX_ATTACHMENTS_PER_MESSAGE = Number(
 export const SEARCH_DB_PATH =
   process.env.GOLDFISH_SEARCH_DB ?? join(WORKSPACE_PATH, 'memory', 'search.sqlite');
 
+/** Structured runtime diagnostics that should stay outside the source repo */
+export const DIAGNOSTICS_PATH =
+  process.env.GOLDFISH_DIAGNOSTICS_PATH ??
+  join(WORKSPACE_PATH, 'diagnostics', 'native-stream-failures.jsonl');
+
 /** Default max turns for Claude Code (allow substantial agentic work) */
 export const DEFAULT_MAX_TURNS = Number(process.env.GOLDFISH_MAX_TURNS ?? 50);
 

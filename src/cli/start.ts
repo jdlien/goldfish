@@ -8,6 +8,11 @@ import { createChildLogger } from '../lib/logger.js';
 import { formatForSlack, splitSlackMessage } from '../lib/slackFormatter.js';
 import { SlackStreamUpdater } from '../lib/SlackStreamUpdater.js';
 import { SlackNativeStreamer } from '../lib/SlackNativeStreamer.js';
+import {
+  postNativeStreamRecovery,
+  type NativeStreamRecoveryResult,
+} from '../lib/nativeStreamRecovery.js';
+import { writeNativeStreamFailureRecord } from '../lib/nativeStreamDiagnostics.js';
 import { extractToolSources } from '../lib/toolSources.js';
 import { SlackFileDownloader, type SlackFile } from '../adapters/SlackFileDownloader.js';
 import { ErrorCodes } from '../domain/services/result.js';
@@ -39,6 +44,63 @@ let slackClient: SlackBoltClient | null = null;
 // Per-session concurrency lock: serializes Claude invocations so two messages
 // in the same thread don't spawn competing processes on the same session.
 const sessionLocks = new Map<string, Promise<void>>();
+
+interface NativeStreamDeliveryRecoveryParams {
+  webClient: ReturnType<SlackBoltClient['getWebClient']>;
+  channelId: string;
+  threadTs: string;
+  messageTs: string;
+  sessionId: string;
+  claudeSessionId: string | null;
+  nativeStreamer: SlackNativeStreamer;
+  fullText: string;
+}
+
+export async function handleNativeStreamDeliveryRecovery(
+  params: NativeStreamDeliveryRecoveryParams,
+): Promise<NativeStreamRecoveryResult> {
+  const deliveryStatus = params.nativeStreamer.getDeliveryStatus();
+  const noop: NativeStreamRecoveryResult = { attempted: false, ok: true, postedTs: [] };
+
+  if (!deliveryStatus.suspected) {
+    return noop;
+  }
+
+  logger.warn(
+    {
+      sessionId: params.sessionId,
+      claudeSessionId: params.claudeSessionId,
+      reasons: deliveryStatus.issues.map((issue) => issue.reason),
+      rawTextLength: params.fullText.length,
+      unsentSuffixLength: deliveryStatus.unsentSuffixLength,
+    },
+    'Suspected native stream delivery gap - posting full response recovery',
+  );
+
+  const recovery = params.fullText.trim()
+    ? await postNativeStreamRecovery({
+        webClient: params.webClient,
+        channel: params.channelId,
+        threadTs: params.threadTs,
+        rawText: params.fullText,
+      })
+    : noop;
+
+  await writeNativeStreamFailureRecord({
+    timestamp: new Date().toISOString(),
+    channelId: params.channelId,
+    threadTs: params.threadTs,
+    messageTs: params.messageTs,
+    sessionId: params.sessionId,
+    claudeSessionId: params.claudeSessionId,
+    deliveryStatus,
+    rawTextLength: params.fullText.length,
+    rawTextPreview: params.fullText.slice(0, 500),
+    recovery,
+  });
+
+  return recovery;
+}
 
 /**
  * Start the Goldfish bot
@@ -335,6 +397,11 @@ export async function start(): Promise<void> {
         let claudeSessionId: string | undefined;
         let durationMs: number | undefined;
         let costUsd: number | undefined;
+        let nativeRecovery: NativeStreamRecoveryResult = {
+          attempted: false,
+          ok: true,
+          postedTs: [],
+        };
 
         try {
           nativeStreamer.start();
@@ -396,6 +463,17 @@ export async function start(): Promise<void> {
           // Close the stream. We've already streamed all deltas via append,
           // so no final text is needed here — finalize in place.
           await nativeStreamer.finish();
+
+          nativeRecovery = await handleNativeStreamDeliveryRecovery({
+            webClient: slackClient!.getWebClient(),
+            channelId,
+            threadTs: streamThreadTs,
+            messageTs: msg.ts,
+            sessionId: session.id,
+            claudeSessionId: claudeSessionId ?? null,
+            nativeStreamer,
+            fullText: result,
+          });
         } catch (error) {
           logger.error({ error }, 'Native streaming Claude invocation failed');
           const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -410,30 +488,46 @@ export async function start(): Promise<void> {
 
           await nativeStreamer.abort(fallbackText);
 
-          // If there's unsent text (the stream died mid-response), post
-          // the remainder as a regular follow-up message so the user sees
-          // the complete response instead of a truncated one.
-          const unsent = nativeStreamer.getUnsentText();
-          if (unsent.trim()) {
-            logger.info(
-              { unsentLength: unsent.length },
-              'Posting unsent text as follow-up message after stream failure',
-            );
-            try {
-              await slackClient!.getWebClient().chat.postMessage({
-                channel: channelId,
-                text: unsent,
-                thread_ts: streamThreadTs,
-              });
-            } catch (postError) {
-              logger.error(
-                { error: postError },
-                'Failed to post unsent text as follow-up',
+          result = accumulated;
+          const deliveryStatus = nativeStreamer.getDeliveryStatus();
+          if (deliveryStatus.suspected) {
+            nativeRecovery = await handleNativeStreamDeliveryRecovery({
+              webClient: slackClient!.getWebClient(),
+              channelId,
+              threadTs: streamThreadTs,
+              messageTs: msg.ts,
+              sessionId: session.id,
+              claudeSessionId: claudeSessionId ?? null,
+              nativeStreamer,
+              fullText: accumulated,
+            });
+          } else {
+            // If there's unsent suffix text from a straightforward thrown
+            // append failure, post it through the same split/retried helper.
+            const unsent = nativeStreamer.getUnsentText();
+            if (unsent.trim()) {
+              logger.info(
+                { unsentLength: unsent.length },
+                'Posting unsent text as follow-up message after stream failure',
               );
+              nativeRecovery = await postNativeStreamRecovery({
+                webClient: slackClient!.getWebClient(),
+                channel: channelId,
+                threadTs: streamThreadTs,
+                rawText: unsent,
+              });
             }
+          }
 
-            // Still save the full response to the transcript
-            result = accumulated;
+          if (result.trim()) {
+            logger.info(
+              {
+                deliverySuspected: deliveryStatus.suspected,
+                recoveryAttempted: nativeRecovery.attempted,
+                recoveryOk: nativeRecovery.ok,
+              },
+              'Persisting interrupted native streaming response',
+            );
             if (claudeSessionId && claudeSessionId !== session.claudeSessionId) {
               await repo.updateClaudeSessionId(session.id, claudeSessionId);
             }
@@ -485,8 +579,17 @@ export async function start(): Promise<void> {
           costUsd,
         });
 
+        const deliveryStatus = nativeStreamer.getDeliveryStatus();
         logger.info(
-          { sessionId: session.id, claudeSessionId, durationMs },
+          {
+            sessionId: session.id,
+            claudeSessionId,
+            durationMs,
+            deliverySuspected: deliveryStatus.suspected,
+            deliveryReasons: deliveryStatus.issues.map((issue) => issue.reason),
+            recovered: nativeRecovery.attempted ? nativeRecovery.ok : false,
+            recoveryPostedTs: nativeRecovery.postedTs,
+          },
           'Native streaming response completed',
         );
       } else if (STREAMING_ENABLED) {
