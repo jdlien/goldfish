@@ -699,6 +699,158 @@ describe('SlackNativeStreamer', () => {
     });
   });
 
+  describe('delivery status tracking', () => {
+    it('finish() records final_flush_failed when final buffer flush rejects', async () => {
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
+      streamer.start();
+      await streamer.appendText('already buffered');
+
+      mockStreamer.append.mockRejectedValueOnce(new Error('slack 500'));
+
+      await expect(streamer.finish()).resolves.toBeUndefined();
+
+      const status = streamer.getDeliveryStatus();
+      expect(status.suspected).toBe(true);
+      expect(status.issues.map((issue) => issue.reason)).toContain('final_flush_failed');
+      expect(mockStreamer.stop).toHaveBeenCalled();
+    });
+
+    it('clean finish() leaves delivery status not suspected', async () => {
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
+      streamer.start();
+      await streamer.appendText('hello');
+
+      await streamer.finish();
+
+      expect(streamer.getDeliveryStatus()).toMatchObject({
+        suspected: false,
+        issues: [],
+        rawTextLength: 5,
+        confirmedSentBytes: 5,
+        unsentSuffixLength: 0,
+        hasUnsentSuffix: false,
+      });
+    });
+
+    it('smart rollover records a failed before append as suspect and still sends after text', async () => {
+      const streamer2 = createMockStreamer();
+      mockClient.chatStream
+        .mockReturnValueOnce(mockStreamer)
+        .mockReturnValueOnce(streamer2);
+
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
+      streamer.start();
+
+      await streamer.appendText('x'.repeat(6600));
+      mockStreamer.append.mockClear();
+      mockStreamer.append.mockRejectedValueOnce(new Error('append lost'));
+
+      await streamer.appendText('before split\n\nafter split');
+
+      const status = streamer.getDeliveryStatus();
+      expect(status.suspected).toBe(true);
+      expect(status.issues.map((issue) => issue.reason)).toContain(
+        'smart_rollover_append_failed',
+      );
+      expect(streamer2.append).toHaveBeenCalledWith({
+        markdown_text: 'after split',
+      });
+    });
+
+    it('records append_retry_failed before throwing when rollover retry fails', async () => {
+      const streamer2 = createMockStreamer();
+      mockClient.chatStream
+        .mockReturnValueOnce(mockStreamer)
+        .mockReturnValueOnce(streamer2);
+
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
+      streamer.start();
+      await streamer.appendText('sent ');
+
+      mockStreamer.append.mockRejectedValueOnce(
+        slackError('message_not_in_streaming_state'),
+      );
+      mockStreamer.stop.mockRejectedValueOnce(
+        slackError('message_not_in_streaming_state'),
+      );
+      streamer2.append.mockRejectedValueOnce(new Error('retry failed'));
+
+      await expect(streamer.appendText('lost')).rejects.toThrow('retry failed');
+
+      const status = streamer.getDeliveryStatus();
+      expect(status.suspected).toBe(true);
+      expect(status.issues.map((issue) => issue.reason)).toContain('append_retry_failed');
+    });
+
+    it('records append_failed before throwing on non-recoverable append errors', async () => {
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
+      streamer.start();
+
+      mockStreamer.append.mockRejectedValueOnce(new Error('connection reset'));
+
+      await expect(streamer.appendText('lost')).rejects.toThrow('connection reset');
+
+      const status = streamer.getDeliveryStatus();
+      expect(status.suspected).toBe(true);
+      expect(status.issues.map((issue) => issue.reason)).toContain('append_failed');
+    });
+
+    it('records rollover_stop_failed for non-finalized old stream stop failures', async () => {
+      const streamer2 = createMockStreamer();
+      mockClient.chatStream
+        .mockReturnValueOnce(mockStreamer)
+        .mockReturnValueOnce(streamer2);
+
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
+      streamer.start();
+
+      await streamer.appendText('x'.repeat(7980));
+      mockStreamer.stop.mockRejectedValueOnce(
+        Object.assign(new Error('http 500'), { statusCode: 500 }),
+      );
+
+      await streamer.appendText('y'.repeat(30));
+
+      const status = streamer.getDeliveryStatus();
+      expect(status.suspected).toBe(true);
+      expect(status.issues.map((issue) => issue.reason)).toContain('rollover_stop_failed');
+    });
+
+    it('does not mark delivery suspect when rollover stop sees message_not_in_streaming_state', async () => {
+      const streamer2 = createMockStreamer();
+      mockClient.chatStream
+        .mockReturnValueOnce(mockStreamer)
+        .mockReturnValueOnce(streamer2);
+
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
+      streamer.start();
+
+      await streamer.appendText('x'.repeat(7980));
+      mockStreamer.stop.mockRejectedValueOnce(
+        slackError('message_not_in_streaming_state'),
+      );
+
+      await streamer.appendText('y'.repeat(30));
+
+      expect(streamer.getDeliveryStatus().suspected).toBe(false);
+    });
+
+    it('finish(finalMarkdown) accounts for confirmed final markdown bytes', async () => {
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
+      streamer.start();
+
+      await streamer.finish('Final answer');
+
+      expect(streamer.getDeliveryStatus()).toMatchObject({
+        suspected: false,
+        rawTextLength: 'Final answer'.length,
+        confirmedSentBytes: 'Final answer'.length,
+        unsentSuffixLength: 0,
+        hasUnsentSuffix: false,
+      });
+    });
+  });
+
   // =================================================================
   // Existing behavior tests for streaming error recovery that should
   // already pass on the current code (from commit 16de4ba).

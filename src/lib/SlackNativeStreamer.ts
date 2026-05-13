@@ -6,6 +6,34 @@ import { STREAM_BUFFER_SIZE } from '../config.js';
 type WebClient = webApi.WebClient;
 type ChatStreamer = ReturnType<WebClient['chatStream']>;
 
+export type NativeStreamDeliveryReason =
+  | 'append_failed'
+  | 'append_retry_failed'
+  | 'smart_rollover_append_failed'
+  | 'final_flush_failed'
+  | 'rollover_stop_failed';
+
+export interface NativeStreamDeliveryIssue {
+  reason: NativeStreamDeliveryReason;
+  message: string;
+  error?: unknown;
+  rawTextLength: number;
+  confirmedSentBytes: number;
+  currentStreamTextLength: number;
+  estimatedBufferedBytes: number;
+}
+
+export interface NativeStreamDeliveryStatus {
+  /** True when a recorded delivery issue means Slack visibility is uncertain. */
+  suspected: boolean;
+  issues: NativeStreamDeliveryIssue[];
+  rawTextLength: number;
+  confirmedSentBytes: number;
+  /** Informational suffix count for legacy thrown-error recovery. */
+  unsentSuffixLength: number;
+  hasUnsentSuffix: boolean;
+}
+
 /**
  * Map from Claude tool names to human-readable task labels.
  * Shown in Slack's native task timeline UI when streaming.
@@ -85,6 +113,7 @@ export class SlackNativeStreamer {
   private rawText = '';
   /** Bytes of rawText that were confirmed sent to Slack (via successful append). */
   private confirmedSentBytes = 0;
+  private deliveryIssues: NativeStreamDeliveryIssue[] = [];
   private stopped = false;
   /**
    * Approximate bytes written to the current streamer instance since
@@ -205,8 +234,16 @@ export class SlackNativeStreamer {
             await this.streamer!.append({ markdown_text: before });
             this.bytesInCurrentStream += before.length;
             this.confirmedSentBytes += before.length;
-          } catch {
-            // Partial send failed — will be handled by rollover
+          } catch (error) {
+            this.recordDeliveryIssue(
+              'smart_rollover_append_failed',
+              'Text before smart rollover failed to append and was not replayed',
+              error,
+            );
+            logger.warn(
+              { error, beforeLength: before.length },
+              'Partial send failed during smart rollover - full response recovery required',
+            );
           }
         }
         this.confirmedSentBytes += breakLen;
@@ -253,6 +290,11 @@ export class SlackNativeStreamer {
           this.confirmedSentBytes += markdown.length;
           return;
         } catch (retryError) {
+          this.recordDeliveryIssue(
+            'append_retry_failed',
+            'Append failed again after recoverable rollover',
+            retryError,
+          );
           logger.error(
             { error: retryError },
             'Append failed again after rollover; giving up',
@@ -260,6 +302,11 @@ export class SlackNativeStreamer {
           throw retryError;
         }
       }
+      this.recordDeliveryIssue(
+        'append_failed',
+        'Append failed before text could be sent to the native stream',
+        error,
+      );
       logger.error({ error }, 'Failed to append to native stream');
       throw error;
     }
@@ -313,10 +360,18 @@ export class SlackNativeStreamer {
     try {
       await oldStreamer.stop();
     } catch (error) {
+      const alreadyFinalized = isNotInStreamingState(error);
       logger.warn(
-        { error },
-        'Old stream failed to stop cleanly during rollover — continuing anyway',
+        { error, alreadyFinalized },
+        'Old stream failed to stop cleanly during rollover',
       );
+      if (!alreadyFinalized) {
+        this.recordDeliveryIssue(
+          'rollover_stop_failed',
+          'Old stream stop failed during rollover; buffered text delivery is uncertain',
+          error,
+        );
+      }
     }
 
     // Start a fresh stream in the same thread. Content appended from
@@ -570,14 +625,31 @@ export class SlackNativeStreamer {
       // processing the append before we finalize with stopStream.
       // Without this, stopStream can race with pending appends and the
       // finalized message renders truncated (observed on both iOS and desktop).
+      let finalFlushSucceeded = false;
       try {
         if (finalMarkdown) {
           await this.streamer.append({ markdown_text: finalMarkdown, chunks: [] });
         } else {
           await this.streamer.append({ chunks: [] });
         }
-      } catch {
-        // Buffer may already be empty — not critical
+        finalFlushSucceeded = true;
+      } catch (error) {
+        this.recordDeliveryIssue(
+          'final_flush_failed',
+          'Final SDK buffer flush failed before stopStream',
+          error,
+        );
+        logger.error(
+          {
+            error,
+            rawTextLength: this.rawText.length,
+            currentStreamTextLength: this.currentStreamText.length,
+          },
+          'Final buffer flush failed in finish() - full response recovery required',
+        );
+      }
+      if (finalMarkdown && finalFlushSucceeded) {
+        this.confirmedSentBytes += finalMarkdown.length;
       }
       await new Promise((resolve) => setTimeout(resolve, 200));
 
@@ -665,11 +737,39 @@ export class SlackNativeStreamer {
     return this.rawText.slice(this.confirmedSentBytes);
   }
 
+  getDeliveryStatus(): NativeStreamDeliveryStatus {
+    const unsentSuffixLength = Math.max(0, this.rawText.length - this.confirmedSentBytes);
+    return {
+      suspected: this.deliveryIssues.length > 0,
+      issues: [...this.deliveryIssues],
+      rawTextLength: this.rawText.length,
+      confirmedSentBytes: this.confirmedSentBytes,
+      unsentSuffixLength,
+      hasUnsentSuffix: unsentSuffixLength > 0,
+    };
+  }
+
   /**
    * True once stop() or abort() has been called.
    */
   isStopped(): boolean {
     return this.stopped;
+  }
+
+  private recordDeliveryIssue(
+    reason: NativeStreamDeliveryReason,
+    message: string,
+    error?: unknown,
+  ): void {
+    this.deliveryIssues.push({
+      reason,
+      message,
+      error,
+      rawTextLength: this.rawText.length,
+      confirmedSentBytes: this.confirmedSentBytes,
+      currentStreamTextLength: this.currentStreamText.length,
+      estimatedBufferedBytes: Math.min(STREAM_BUFFER_SIZE, this.rawText.length),
+    });
   }
 }
 
