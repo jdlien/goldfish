@@ -64,7 +64,7 @@ scripts/
 
 launchd/
 ├── goldfish-env.sh             # Shell env bootstrap for launchd
-└── com.goldfish.daemon.plist   # Bot daemon (KeepAlive)
+└── com.jdlien.goldfish.daemon.plist   # Bot daemon (KeepAlive)
 ```
 
 ## How It Works
@@ -105,7 +105,7 @@ See `.env.example` for the full list. Required:
 
 ```bash
 pnpm run build
-launchctl stop com.goldfish.daemon    # KeepAlive auto-restarts with new code
+launchctl stop com.jdlien.goldfish.daemon    # KeepAlive auto-restarts with new code
 ```
 
 ## Conventions

@@ -23,8 +23,8 @@ cp schedule.example.yaml "${GOLDFISH_WORKSPACE:-$HOME/goldfish-workspace}/schedu
 ### 2. Install the scheduler LaunchAgent
 
 ```bash
-cp launchd/com.goldfish.scheduler.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.goldfish.scheduler.plist
+cp launchd/com.jdlien.goldfish.scheduler.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.jdlien.goldfish.scheduler.plist
 ```
 
 That's it. One LaunchAgent runs everything.

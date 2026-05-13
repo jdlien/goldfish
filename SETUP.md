@@ -156,14 +156,13 @@ Edit `launchd/goldfish-env.sh` — update `GOLDFISH_HOME` if you cloned somewher
 export GOLDFISH_HOME="${GOLDFISH_HOME:-$HOME/code/goldfish}"
 ```
 
-Edit `launchd/com.goldfish.daemon.plist` — update the `WorkingDirectory` with your actual absolute path (launchd can't expand `~`):
+Edit `launchd/com.jdlien.goldfish.daemon.plist` if you cloned somewhere other than `~/code/goldfish` — update the repo path inside `ProgramArguments`:
 
 ```xml
-<key>WorkingDirectory</key>
-<string>/Users/YOURUSERNAME/code/goldfish</string>
+<string>source ~/code/goldfish/launchd/goldfish-env.sh &amp;&amp; cd ~/code/goldfish &amp;&amp; exec node dist/index.js start</string>
 ```
 
-Do the same for `launchd/com.goldfish.scheduler.plist`.
+Do the same for `launchd/com.jdlien.goldfish.scheduler.plist`.
 
 ### Install and start
 
@@ -172,10 +171,10 @@ Do the same for `launchd/com.goldfish.scheduler.plist`.
 cp launchd/*.plist ~/Library/LaunchAgents/
 
 # Load the daemon (starts immediately and on every login)
-launchctl load ~/Library/LaunchAgents/com.goldfish.daemon.plist
+launchctl load ~/Library/LaunchAgents/com.jdlien.goldfish.daemon.plist
 
 # Load the scheduler (fires every 60s, runs due tasks from your workspace schedule.yaml)
-launchctl load ~/Library/LaunchAgents/com.goldfish.scheduler.plist
+launchctl load ~/Library/LaunchAgents/com.jdlien.goldfish.scheduler.plist
 ```
 
 All scheduled tasks (briefings, heartbeats, maintenance) run through `~/goldfish-workspace/schedule.yaml` by default — see [`docs/deployment-macos.md`](docs/deployment-macos.md).

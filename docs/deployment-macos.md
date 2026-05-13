@@ -13,11 +13,11 @@ Goldfish has two runtime components:
 
 ### The Scheduler (`<workspace>/schedule.yaml`)
 
-All scheduled tasks — proactive Slack messages and nightly maintenance — are defined in `schedule.yaml` inside your workspace and driven by a single LaunchAgent (`com.goldfish.scheduler`) that fires every 60 seconds.
+All scheduled tasks — proactive Slack messages and nightly maintenance — are defined in `schedule.yaml` inside your workspace and driven by a single LaunchAgent (`com.jdlien.goldfish.scheduler`) that fires every 60 seconds.
 
 See [`scheduling.md`](scheduling.md) for the full reference (task types, timing syntax, all fields, locking behavior).
 
-The daemon runs via a separate launchd plist (`com.goldfish.daemon`) which provides `KeepAlive` for auto-restart on crash. All other tasks (briefings, heartbeats, synthesis, indexing) run through the scheduler.
+The daemon runs via a separate launchd plist (`com.jdlien.goldfish.daemon`) which provides `KeepAlive` for auto-restart on crash. All other tasks (briefings, heartbeats, synthesis, indexing) run through the scheduler.
 
 > **Why launchd for the scheduler?** The scheduler spawns `claude` subprocesses that authenticate via the macOS Keychain (Claude Max OAuth). LaunchAgents run in your user's GUI session and have keychain access; cron jobs don't.
 
@@ -77,14 +77,14 @@ You should see your workspace name, bot name, and Claude CLI version.
 The daemon plist keeps the Slack listener running and auto-restarts on crash.
 
 ```bash
-cp launchd/com.goldfish.daemon.plist ~/Library/LaunchAgents/
+cp launchd/com.jdlien.goldfish.daemon.plist ~/Library/LaunchAgents/
 ```
 
 The plist references `~/code/goldfish` as the install path. If your repo is elsewhere, edit the plist before copying.
 
 ```bash
 # Start the daemon (starts immediately and on every login)
-launchctl load ~/Library/LaunchAgents/com.goldfish.daemon.plist
+launchctl load ~/Library/LaunchAgents/com.jdlien.goldfish.daemon.plist
 ```
 
 ### 6. Set Up the Scheduler
@@ -92,8 +92,8 @@ launchctl load ~/Library/LaunchAgents/com.goldfish.daemon.plist
 Install the scheduler LaunchAgent:
 
 ```bash
-cp launchd/com.goldfish.scheduler.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.goldfish.scheduler.plist
+cp launchd/com.jdlien.goldfish.scheduler.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.jdlien.goldfish.scheduler.plist
 ```
 
 Edit `<workspace>/schedule.yaml` (created by `pnpm cli init`) to set your channel IDs and preferred times. See [`scheduling.md`](scheduling.md) for the full reference.
@@ -209,7 +209,7 @@ The daemon plist runs as a LaunchAgent under your user, so it stops when you're 
 
 ### `runs = 0` Is Not Necessarily a Bug
 
-If `launchctl print gui/$(id -u)/com.goldfish.daemon` shows
+If `launchctl print gui/$(id -u)/com.jdlien.goldfish.daemon` shows
 `runs = 0`, that means the daemon hasn't fired _since it was loaded_. If you
 just loaded it, give it a moment. Don't panic — check whether it had a chance to start.
 
@@ -217,17 +217,17 @@ just loaded it, give it a moment. Don't panic — check whether it had a chance 
 
 ```bash
 # Stop the daemon (launchd will restart it due to KeepAlive)
-launchctl stop com.goldfish.daemon
+launchctl stop com.jdlien.goldfish.daemon
 
 # Actually stop it (unload removes it from launchd entirely)
-launchctl unload ~/Library/LaunchAgents/com.goldfish.daemon.plist
+launchctl unload ~/Library/LaunchAgents/com.jdlien.goldfish.daemon.plist
 
 # Start it again
-launchctl load ~/Library/LaunchAgents/com.goldfish.daemon.plist
+launchctl load ~/Library/LaunchAgents/com.jdlien.goldfish.daemon.plist
 
 # Reload after editing a plist
-launchctl unload ~/Library/LaunchAgents/com.goldfish.daemon.plist
-launchctl load ~/Library/LaunchAgents/com.goldfish.daemon.plist
+launchctl unload ~/Library/LaunchAgents/com.jdlien.goldfish.daemon.plist
+launchctl load ~/Library/LaunchAgents/com.jdlien.goldfish.daemon.plist
 
 # Run a scheduled task manually (for testing)
 pnpm cli initiate -t morning
@@ -242,7 +242,7 @@ When you update goldfish source code:
 ```bash
 cd ~/code/goldfish
 pnpm run build                      # Recompile TypeScript
-launchctl stop com.goldfish.daemon  # launchd auto-restarts with new code
+launchctl stop com.jdlien.goldfish.daemon  # launchd auto-restarts with new code
 ```
 
 Scheduled jobs pick up new code automatically on their next fire — they spawn
@@ -280,7 +280,7 @@ That's SIGTERM — launchd sent a stop signal. Normal during restarts.
 
 **Scheduled tasks not firing:**
 
-- Verify the scheduler is loaded: `launchctl list | grep goldfish` should show `com.goldfish.scheduler`
+- Verify the scheduler is loaded: `launchctl list | grep goldfish` should show `com.jdlien.goldfish.scheduler`
 - Check the scheduler log: `cat /tmp/goldfish-schedule.log`
 - Preview what would run: `pnpm cli schedule run --dry-run`
 - List all tasks and their cron expressions: `pnpm cli schedule list`

@@ -167,7 +167,7 @@ sqlite3 memory/search.sqlite \
 
 ## Component 3: The Scheduler
 
-All scheduled tasks are defined in `schedule.yaml` inside the user workspace and driven by a launchd agent (`com.goldfish.scheduler`) that fires every 60 seconds.
+All scheduled tasks are defined in `schedule.yaml` inside the user workspace and driven by a launchd agent (`com.jdlien.goldfish.scheduler`) that fires every 60 seconds.
 
 The scheduler loads the config, checks which tasks are due, and fires them. Lock files prevent overlapping runs of the same task. There are two categories:
 

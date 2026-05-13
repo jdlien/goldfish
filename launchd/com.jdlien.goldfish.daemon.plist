@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.goldfish.daemon</string>
+    <string>com.jdlien.goldfish.daemon</string>
 
     <key>ProgramArguments</key>
     <array>
