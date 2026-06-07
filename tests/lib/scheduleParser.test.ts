@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { parseTime, toCron, cronMatchesNow, loadSchedule } from '../../src/lib/scheduleParser.js';
+import {
+  parseTime,
+  toCron,
+  cronMatchesNow,
+  cronDayMatches,
+  localDateKey,
+  targetDateTimeForToday,
+  loadSchedule,
+} from '../../src/lib/scheduleParser.js';
 import { writeFileSync, mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -403,6 +411,41 @@ describe('cronMatchesNow', () => {
       // Monday 9am — should not match (too early)
       expect(cronMatchesNow('0 10-17 * * 1-5', makeDate(2026, 3, 6, 9, 0))).toBe(false);
     });
+  });
+});
+
+// ─── catch-up helpers ───────────────────────────────────────────────────────
+
+describe('schedule catch-up helpers', () => {
+  const base = { name: 'exploration', type: 'exploration' as const, channel: 'C123' };
+
+  it('formats local date keys without UTC date drift', () => {
+    expect(localDateKey(new Date(2026, 5, 5, 18, 1))).toBe('2026-06-05');
+  });
+
+  it('checks only cron day-of-week constraints', () => {
+    expect(cronDayMatches('0 18 * * 1-5', new Date(2026, 5, 5, 18, 1))).toBe(true);
+    expect(cronDayMatches('0 18 * * 1-5', new Date(2026, 5, 6, 18, 1))).toBe(false);
+  });
+
+  it('returns today local target time for human at tasks', () => {
+    const target = targetDateTimeForToday(
+      { ...base, at: '6pm' },
+      new Date(2026, 5, 5, 18, 1)
+    );
+
+    expect(target?.getFullYear()).toBe(2026);
+    expect(target?.getMonth()).toBe(5);
+    expect(target?.getDate()).toBe(5);
+    expect(target?.getHours()).toBe(18);
+    expect(target?.getMinutes()).toBe(0);
+  });
+
+  it('does not return a target time for raw cron tasks', () => {
+    expect(targetDateTimeForToday(
+      { ...base, at: '6pm', cron: '0 18 * * *' },
+      new Date(2026, 5, 5, 18, 1)
+    )).toBeNull();
   });
 });
 
