@@ -4,11 +4,6 @@
   "description": "AI agent runtime — a Claude Code-native Slack bot with persistent memory",
   "type": "module",
   "packageManager": "pnpm@10.23.0",
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "better-sqlite3"
-    ]
-  },
   "bin": {
     "goldfish": "./dist/index.js"
   },
@@ -32,9 +27,11 @@
     "date-fns": "^4.1.0",
     "dotenv": "^16.4.7",
     "kysely": "^0.28.9",
+    "node-llama-cpp": "3.18.1",
     "patchright": "^1.59.1",
     "pino": "^10.1.0",
     "proper-lockfile": "^4.1.2",
+    "sqlite-vec": "0.1.9",
     "uuid": "^13.0.0",
     "yaml": "^2.8.3",
     "zod": "^4.3.5"

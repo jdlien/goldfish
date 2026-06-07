@@ -35,6 +35,40 @@ export const MAX_ATTACHMENTS_PER_MESSAGE = Number(
 export const SEARCH_DB_PATH =
   process.env.GOLDFISH_SEARCH_DB ?? join(WORKSPACE_PATH, 'memory', 'search.sqlite');
 
+/**
+ * Semantic (vector) memory search configuration.
+ *
+ * Embeddings turn chunk text → 768-dim vectors locally via node-llama-cpp +
+ * the nomic GGUF. The model is fetched at setup time (see `goldfish embeddings
+ * setup`), never vendored into the repo or downloaded silently at 1:15am.
+ */
+
+/** Hugging Face URI for the embedding model. */
+export const EMBEDDING_MODEL_URI =
+  process.env.GOLDFISH_EMBEDDING_MODEL_URI ??
+  'hf:nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.Q8_0.gguf';
+
+/** Directory holding the pulled GGUF — outside both the repo and workspace git. */
+export const EMBEDDING_MODEL_DIR =
+  process.env.GOLDFISH_EMBEDDING_MODEL_DIR ??
+  join(homedir(), 'Library', 'Application Support', 'goldfish', 'models');
+
+/** Embedding dimensionality (nomic-embed-text-v1.5 → 768). */
+export const EMBEDDING_DIMS = Number(process.env.GOLDFISH_EMBEDDING_DIMS ?? 768);
+
+/**
+ * Vector-memory mode:
+ *  - `off`:      FTS only; never load the model or vector tables.
+ *  - `auto`:     use vectors when sqlite-vec + model are available, else warn and
+ *                fall back to a valid FTS-only index (default).
+ *  - `required`: fail loudly if vectors cannot run.
+ */
+export type MemoryVectorsMode = 'off' | 'auto' | 'required';
+export const MEMORY_VECTORS_MODE: MemoryVectorsMode = (() => {
+  const raw = (process.env.GOLDFISH_MEMORY_VECTORS ?? 'auto').toLowerCase();
+  return raw === 'off' || raw === 'required' ? raw : 'auto';
+})();
+
 /** Structured runtime diagnostics that should stay outside the source repo */
 export const DIAGNOSTICS_PATH =
   process.env.GOLDFISH_DIAGNOSTICS_PATH ??
