@@ -23,6 +23,7 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   SHOW_TOOLS,
   validateWorkspace,
+  effortForChannel,
 } from '../config.js';
 
 interface SlackDmMessage {
@@ -409,6 +410,7 @@ export async function start(): Promise<void> {
           const stream = claudeRunner.runStream({
             prompt: userMessage,
             resumeSessionId: resumeSessionId ?? undefined,
+            effort: effortForChannel(channelId),
           });
 
           for await (const event of stream) {
@@ -608,6 +610,7 @@ export async function start(): Promise<void> {
           const stream = claudeRunner.runStream({
             prompt: userMessage,
             resumeSessionId: resumeSessionId ?? undefined,
+            effort: effortForChannel(channelId),
           });
 
           for await (const event of stream) {
@@ -700,6 +703,7 @@ export async function start(): Promise<void> {
         const claudeResult = await claudeRunner.run({
           prompt: userMessage,
           resumeSessionId: resumeSessionId ?? undefined,
+          effort: effortForChannel(channelId),
         });
 
         if (!claudeResult.ok) {

@@ -26,6 +26,8 @@ export interface ClaudeRunParams {
   maxTurns?: number;
   timeoutMs?: number;
   model?: string;
+  /** Thinking effort level: low | medium | high | xhigh | max. Omit for CLI default. */
+  effort?: string;
 }
 
 const SLACK_SYSTEM_PROMPT = `You are responding via Slack. Format output for Slack's limited markdown ("mrkdwn"):
@@ -66,6 +68,7 @@ export class ClaudeRunner {
       maxTurns = DEFAULT_MAX_TURNS,
       timeoutMs = DEFAULT_TIMEOUT_MS,
       model,
+      effort,
     } = params;
 
     const args: string[] = [
@@ -82,6 +85,10 @@ export class ClaudeRunner {
       args.push('--model', model);
     }
 
+    if (effort) {
+      args.push('--effort', effort);
+    }
+
     if (resumeSessionId) {
       args.push('--resume', resumeSessionId);
     } else {
@@ -95,6 +102,7 @@ export class ClaudeRunner {
         maxTurns,
         timeoutMs,
         model,
+        effort,
       },
       'Spawning Claude CLI',
     );
@@ -243,6 +251,7 @@ export class ClaudeRunner {
       maxTurns = DEFAULT_MAX_TURNS,
       timeoutMs = DEFAULT_TIMEOUT_MS,
       model,
+      effort,
     } = params;
 
     const args: string[] = [
@@ -261,6 +270,10 @@ export class ClaudeRunner {
       args.push('--model', model);
     }
 
+    if (effort) {
+      args.push('--effort', effort);
+    }
+
     if (resumeSessionId) {
       args.push('--resume', resumeSessionId);
     } else {
@@ -274,6 +287,7 @@ export class ClaudeRunner {
         maxTurns,
         timeoutMs,
         model,
+        effort,
         streaming: true,
       },
       'Spawning Claude CLI (streaming)',

@@ -92,6 +92,46 @@ export const STREAM_BUFFER_SIZE = Number(
   process.env.GOLDFISH_STREAM_BUFFER_SIZE ?? 1024
 );
 
+/** Effort levels the Claude CLI accepts (anything else is ignored by the CLI). */
+export const VALID_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+/**
+ * Default thinking effort applied to every session unless a channel overrides it.
+ * Unset → omit the flag entirely and let the CLI use its own default.
+ * Set `GOLDFISH_EFFORT` to one of: low | medium | high | xhigh | max.
+ */
+export const DEFAULT_EFFORT = process.env.GOLDFISH_EFFORT;
+
+/**
+ * Per-channel effort overrides. JSON map of Slack channel ID → effort level, e.g.
+ * `GOLDFISH_EFFORT_BY_CHANNEL='{"C0A7VB1U6EA":"low"}'`.
+ * Lets chatty channels run fast (low) while work channels stay sharp (high/max).
+ */
+export const EFFORT_BY_CHANNEL: Record<string, string> = (() => {
+  const raw = process.env.GOLDFISH_EFFORT_BY_CHANNEL;
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as Record<string, string>;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+})();
+
+/**
+ * Resolve the effort level for a given channel. Channel override wins over the
+ * global default. Returns `undefined` (omit the flag) when nothing is configured
+ * or the configured value isn't a valid level — so a typo degrades to CLI default
+ * rather than silently doing something surprising.
+ */
+export function effortForChannel(channelId: string | undefined): string | undefined {
+  const candidate =
+    (channelId ? EFFORT_BY_CHANNEL[channelId] : undefined) ?? DEFAULT_EFFORT;
+  return candidate && VALID_EFFORT_LEVELS.includes(candidate)
+    ? candidate
+    : undefined;
+}
+
 /**
  * Validate that the workspace directory exists and contains a CLAUDE.md.
  * Call this at the start of commands that need the workspace (start, initiate).
