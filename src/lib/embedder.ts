@@ -14,7 +14,15 @@
  */
 
 import { createHash } from 'crypto';
-import { readFileSync } from 'fs';
+import { existsSync, readdirSync, readFileSync } from 'fs';
+import { join } from 'path';
+import {
+  EMBEDDING_MODEL_DIR,
+  EMBEDDING_MODEL_URI,
+  EMBEDDING_DIMS,
+  MEMORY_VECTORS_MODE,
+} from '../config.js';
+import { createChildLogger } from './logger.js';
 
 export type EmbeddingKind = 'document' | 'query';
 
@@ -167,4 +175,41 @@ export class FakeEmbedder implements Embedder {
     }
     return v;
   }
+}
+
+/**
+ * Find a local GGUF in the model dir WITHOUT downloading. Prefers a file whose
+ * name matches the configured URI's basename, else the first `.gguf`.
+ */
+export function findLocalModel(dir: string = EMBEDDING_MODEL_DIR): string | null {
+  if (!existsSync(dir)) return null;
+  const ggufs = readdirSync(dir).filter((f) => f.toLowerCase().endsWith('.gguf'));
+  if (ggufs.length === 0) return null;
+  const wanted = EMBEDDING_MODEL_URI.split('/').pop()?.toLowerCase().replace('.gguf', '');
+  const match = wanted ? ggufs.find((f) => f.toLowerCase().includes(wanted)) : undefined;
+  return join(dir, match ?? ggufs[0]);
+}
+
+/**
+ * Build the embedder the runtime should use, honoring MEMORY_VECTORS_MODE.
+ * Never downloads silently (D6): the model must already be on disk (via
+ * `goldfish embeddings setup`).
+ *  - `off`      → null
+ *  - `auto`     → embedder if the model is present, else warn + null (FTS-only)
+ *  - `required` → embedder, or throw with a setup hint
+ */
+export async function createEmbedderFromConfig(): Promise<Embedder | null> {
+  if (MEMORY_VECTORS_MODE === 'off') return null;
+  const modelPath = findLocalModel();
+  if (!modelPath) {
+    const msg = `No embedding model in ${EMBEDDING_MODEL_DIR}. Run: goldfish embeddings setup`;
+    if (MEMORY_VECTORS_MODE === 'required') throw new Error(msg);
+    createChildLogger('embedder').warn(msg);
+    return null;
+  }
+  return new NodeLlamaCppEmbedder({
+    modelPath,
+    modelUri: EMBEDDING_MODEL_URI,
+    dims: EMBEDDING_DIMS,
+  });
 }
