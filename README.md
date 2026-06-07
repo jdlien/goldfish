@@ -98,6 +98,36 @@ Environment variables (in `.env`):
 | `GOLDFISH_TIMEOUT_MS`        | Claude Code timeout in ms (default: 300000)                         |
 | `GOLDFISH_SESSION_EXPIRY_MS` | Session expiry in ms (default: 86400000 / 24h)                      |
 | `GOLDFISH_SHOW_THINKING`     | Show "Thinking..." indicator (default: true)                        |
+| `GOLDFISH_EFFORT`            | Default Claude thinking effort for all channels (see below)         |
+| `GOLDFISH_EFFORT_BY_CHANNEL` | Per-channel effort overrides as a JSON map (see below)              |
+
+### Per-channel thinking effort
+
+Claude Code accepts a `--effort` level per session: `low`, `medium`, `high`, `xhigh`, or `max`.
+Lower effort means faster, shallower replies; higher effort means slower, more deliberate
+reasoning. Goldfish lets you pick a level per Slack channel — keep a casual channel snappy
+on `low` while a work channel stays sharp on `high`.
+
+- `GOLDFISH_EFFORT` sets a default applied to every channel.
+- `GOLDFISH_EFFORT_BY_CHANNEL` is a JSON object mapping channel ID → level; it overrides the default.
+- A channel with no override (and no default) uses Claude Code's own default effort.
+- An unrecognized level or malformed JSON is ignored, falling back to the CLI default — it never errors.
+
+```bash
+# Default everything to medium, but run one casual channel fast:
+GOLDFISH_EFFORT=medium
+GOLDFISH_EFFORT_BY_CHANNEL='{"C0A7VB1U6EA":"low","C0WORKCHAN1":"high"}'
+```
+
+> **⚠️ Quote the JSON with single quotes.** The launchd wrapper (`launchd/goldfish-env.sh`)
+> loads `.env` by `source`-ing it in bash, which strips **double** quotes out of the value —
+> turning `{"C123":"low"}` into invalid `{C123:low}` that silently parses to an empty map.
+> Wrapping the whole value in **single** quotes preserves the inner double quotes through both
+> bash sourcing and dotenv. (This bites any JSON-valued variable in `.env`, not just this one.)
+
+After editing `.env`, restart the daemon so the new environment is picked up:
+`launchctl kickstart -k gui/$(id -u)/com.jdlien.goldfish.daemon` (run `npm run build` first
+if you also changed source — the daemon runs the compiled `dist/`, not `src/`).
 
 ## Agent Identity
 
