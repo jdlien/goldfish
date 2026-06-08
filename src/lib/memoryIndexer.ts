@@ -143,7 +143,11 @@ export function chunkFile(filePath: string): Chunk[] {
 
 export function findMarkdownFiles(workspace: string): string[] {
   const files: string[] = [];
-  const excluded = new Set(['.git', 'node_modules', 'dist', 'code', '.claude']);
+  // Non-hidden dirs that still aren't memory. Hidden dirs (.git, .cache,
+  // .claude-auth, .clawhub, .openclaw, …) are excluded by the dotdir rule below —
+  // they're caches / auth / session junk, not memory content, and embedding them
+  // is both wasteful and a crash risk.
+  const excluded = new Set(['node_modules', 'dist', 'code']);
 
   function walk(dir: string) {
     let entries;
@@ -153,13 +157,12 @@ export function findMarkdownFiles(workspace: string): string[] {
       return;
     }
     for (const entry of entries) {
-      if (excluded.has(entry.name)) continue;
-      const fullPath = join(dir, entry.name);
       if (entry.isDirectory()) {
-        walk(fullPath);
+        if (entry.name.startsWith('.') || excluded.has(entry.name)) continue;
+        walk(join(dir, entry.name));
       } else if (entry.isFile()) {
         const ext = extname(entry.name).toLowerCase();
-        if (ext === '.md' || ext === '.jsonl') files.push(fullPath);
+        if (ext === '.md' || ext === '.jsonl') files.push(join(dir, entry.name));
       }
     }
   }

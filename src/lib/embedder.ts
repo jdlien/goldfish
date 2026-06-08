@@ -32,8 +32,24 @@ const PREFIX: Record<EmbeddingKind, string> = {
   query: 'search_query: ',
 };
 
+/**
+ * Hard cap on characters fed to the model. nomic handles ~8192 tokens; chunks are
+ * normally far smaller, but a pathological chunk (giant JSONL line, minified blob)
+ * can crash the native backend. Truncating is strictly safer than crashing.
+ */
+export const MAX_EMBED_CHARS = 8000;
+
+/**
+ * Embedding context size in tokens. nomic-embed-text-v1.5 supports 8192; the
+ * node-llama-cpp default is much smaller, so a long chunk (e.g. a big JSONL
+ * session line) overflows it and the native backend aborts. Sizing it to the
+ * model max — combined with MAX_EMBED_CHARS (~≤2700 tokens) — keeps every input
+ * comfortably inside the window.
+ */
+export const EMBED_CONTEXT_SIZE = 8192;
+
 export function applyPrefix(text: string, kind: EmbeddingKind): string {
-  return PREFIX[kind] + text;
+  return PREFIX[kind] + (text.length > MAX_EMBED_CHARS ? text.slice(0, MAX_EMBED_CHARS) : text);
 }
 
 /** L2-normalize in place; returns the same array. Zero vectors are left as-is. */
@@ -57,6 +73,8 @@ export interface Embedder {
   readonly providerKey: string;
   /** Embed a batch, applying the kind's prefix and L2-normalizing each vector. */
   embed(texts: string[], kind: EmbeddingKind): Promise<Float32Array[]>;
+  /** Release native resources (model/context). Important before process exit. */
+  dispose?(): Promise<void>;
 }
 
 export interface NodeLlamaCppEmbedderOptions {
@@ -107,7 +125,7 @@ export class NodeLlamaCppEmbedder implements Embedder {
         const { getLlama } = await import('node-llama-cpp');
         const llama = await getLlama();
         this.#model = await llama.loadModel({ modelPath: this.#modelPath });
-        this.#ctx = await this.#model.createEmbeddingContext();
+        this.#ctx = await this.#model.createEmbeddingContext({ contextSize: EMBED_CONTEXT_SIZE });
       })();
     }
     await this.#loading;
@@ -117,14 +135,28 @@ export class NodeLlamaCppEmbedder implements Embedder {
     await this.#ensureLoaded();
     const out: Float32Array[] = [];
     for (const text of texts) {
-      const res = await this.#ctx.getEmbeddingFor(applyPrefix(text, kind));
-      const vec = Float32Array.from(res.vector as number[]);
-      if (vec.length !== this.dims) {
-        throw new Error(`Embedding dim mismatch: got ${vec.length}, expected ${this.dims}`);
-      }
-      out.push(l2normalize(vec));
+      out.push(l2normalize(await this.#embedOne(text, kind)));
     }
     return out;
+  }
+
+  /** Embed one text, halving the char budget and retrying if it overflows the context. */
+  async #embedOne(text: string, kind: EmbeddingKind): Promise<Float32Array> {
+    let limit = MAX_EMBED_CHARS;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const res = await this.#ctx.getEmbeddingFor(PREFIX[kind] + text.slice(0, limit));
+        const vec = Float32Array.from(res.vector as number[]);
+        if (vec.length !== this.dims) {
+          throw new Error(`Embedding dim mismatch: got ${vec.length}, expected ${this.dims}`);
+        }
+        return vec;
+      } catch (err) {
+        const overflow = /context size|longer than/i.test((err as Error)?.message ?? '');
+        if (attempt >= 3 || !overflow) throw err;
+        limit = Math.floor(limit / 2);
+      }
+    }
   }
 
   async dispose(): Promise<void> {

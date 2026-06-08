@@ -50,6 +50,10 @@ function setupTestWorkspace() {
 
   mkdirSync(join(TEST_DIR, 'node_modules'), { recursive: true });
   writeFileSync(join(TEST_DIR, 'node_modules', 'something.md'), '# Should be excluded');
+
+  // Hidden dir (cache / auth / session junk) — must not be indexed or embedded.
+  mkdirSync(join(TEST_DIR, '.claude-auth'), { recursive: true });
+  writeFileSync(join(TEST_DIR, '.claude-auth', 'session.jsonl'), '{"junk":"excluded"}');
 }
 
 function cleanupTestWorkspace() {
@@ -183,6 +187,10 @@ describe('findMarkdownFiles', () => {
 
   it('excludes node_modules', () => {
     expect(findMarkdownFiles(TEST_DIR).some((f) => f.includes('node_modules'))).toBe(false);
+  });
+
+  it('excludes hidden directories (.claude-auth, .cache, .git, …)', () => {
+    expect(findMarkdownFiles(TEST_DIR).some((f) => f.includes('.claude-auth'))).toBe(false);
   });
 });
 

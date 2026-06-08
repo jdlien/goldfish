@@ -146,6 +146,7 @@ program
           `${stats.vectorCacheHits} cached, ${stats.vectorFailures} failed)`
         : ' (FTS only)')
     );
+    await embedder?.dispose?.(); // tear down the native Metal context cleanly
   });
 
 // Schedule commands

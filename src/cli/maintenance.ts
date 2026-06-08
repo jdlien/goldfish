@@ -167,6 +167,7 @@ async function runIndexMemory(): Promise<void> {
     );
     console.log(chalk.green('\n✓ Memory index rebuilt\n'));
     logger.info(stats, 'Memory index rebuilt');
+    await embedder?.dispose?.(); // tear down the native Metal context cleanly
   } catch (err) {
     logger.error({ error: err }, 'Memory indexing failed');
     throw err;
