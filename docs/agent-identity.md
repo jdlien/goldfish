@@ -106,7 +106,7 @@ Goldfish workspaces are backwards-compatible with OpenClaw agent workspaces. If 
 - **Identity files** (`SOUL.md`, `IDENTITY.md`, `USER.md`, `FOCUS.md`) work as-is
 - **Memory directory** (`memory/`) structure is identical
 - **Tools** in the workspace are accessible — Claude Code has full bash/file access
-- **Search index** — Goldfish rebuilds its own FTS5 index nightly; OpenClaw's `openclaw-index.sqlite` can coexist
+- **Search index** — Goldfish rebuilds its own FTS5 + semantic-vector index nightly (`memory/search.sqlite`); OpenClaw's `openclaw-index.sqlite` can coexist as a deprecated snapshot
 
 The key difference is the entry point:
 

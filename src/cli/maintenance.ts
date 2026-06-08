@@ -10,7 +10,8 @@ import { execFileSync } from 'child_process';
 import { join } from 'path';
 import { createChildLogger } from '../lib/logger.js';
 import { indexWorkspace } from '../lib/memoryIndexer.js';
-import { WORKSPACE_PATH, SEARCH_DB_PATH } from '../config.js';
+import { createEmbedderFromConfig } from '../lib/embedder.js';
+import { WORKSPACE_PATH, SEARCH_DB_PATH, MEMORY_VECTORS_MODE } from '../config.js';
 import type { ScheduleTask } from '../lib/scheduleParser.js';
 import { initDb, closeDb } from '../db/index.js';
 import { SqliteRepo } from '../adapters/SqliteRepo.js';
@@ -147,13 +148,26 @@ async function runIndexMemory(): Promise<void> {
   console.log(chalk.bold('\n🔍 Rebuilding memory index...\n'));
 
   try {
-    const stats = indexWorkspace(SEARCH_DB_PATH, WORKSPACE_PATH);
+    const embedder = await createEmbedderFromConfig();
+    const stats = await indexWorkspace(SEARCH_DB_PATH, WORKSPACE_PATH, {
+      embedder,
+      vectorsMode: MEMORY_VECTORS_MODE,
+    });
 
     console.log(chalk.dim(`  Indexed: ${stats.indexed} files (${stats.totalChunks} chunks)`));
     console.log(chalk.dim(`  Skipped: ${stats.skipped} unchanged`));
     console.log(chalk.dim(`  Removed: ${stats.removed} deleted`));
+    console.log(
+      chalk.dim(
+        stats.vectorEnabled
+          ? `  Vectors: ${stats.vectorsInserted} inserted (${stats.vectorBackfilled} backfilled, ` +
+              `${stats.vectorCacheHits} cached, ${stats.vectorFailures} failed)`
+          : '  Vectors: disabled (FTS only)',
+      ),
+    );
     console.log(chalk.green('\n✓ Memory index rebuilt\n'));
     logger.info(stats, 'Memory index rebuilt');
+    await embedder?.dispose?.(); // tear down the native Metal context cleanly
   } catch (err) {
     logger.error({ error: err }, 'Memory indexing failed');
     throw err;

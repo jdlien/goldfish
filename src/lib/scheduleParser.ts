@@ -102,6 +102,45 @@ export function parseTime(time: string): { hour: number; minute: number } {
 }
 
 /**
+ * Format a date as a local YYYY-MM-DD key.
+ *
+ * Deliberately avoids toISOString(), which uses UTC and can shift evening
+ * local schedule runs into tomorrow's date.
+ */
+export function localDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * True for human-readable fixed-time tasks eligible for same-day catch-up.
+ * Raw cron stays literal cron, even if the YAML also contains an ignored at.
+ */
+export function isHumanAtTask(task: ScheduleTask): boolean {
+  return Boolean(task.at && !task.cron);
+}
+
+/**
+ * Build today's local Date for a human-readable at: task.
+ */
+export function targetDateTimeForToday(task: ScheduleTask, now: Date): Date | null {
+  if (!isHumanAtTask(task) || !task.at) return null;
+
+  const { hour, minute } = parseTime(task.at);
+  return new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+    hour,
+    minute,
+    0,
+    0
+  );
+}
+
+/**
  * Parse an interval string like "hour", "2 hours", "4 hours"
  */
 function parseInterval(every: string): number {
@@ -213,7 +252,7 @@ export function loadSchedule(path: string): ScheduleConfig {
  * Check if a cron expression matches the given date (to the minute).
  */
 export function cronMatchesNow(cronExpr: string, now: Date): boolean {
-  const [minuteField, hourField, _domField, _monthField, dowField] = cronExpr.split(' ');
+  const [minuteField, hourField, _domField, _monthField, dowField] = cronExpr.trim().split(/\s+/);
 
   const minute = now.getMinutes();
   const hour = now.getHours();
@@ -224,6 +263,15 @@ export function cronMatchesNow(cronExpr: string, now: Date): boolean {
     fieldMatches(hourField, hour, 0, 23) &&
     fieldMatches(dowField, dow, 0, 6)
   );
+}
+
+/**
+ * Check only the day-of-week part of a cron expression against a local date.
+ * Used by catch-up logic so schedule.ts does not duplicate days: parsing.
+ */
+export function cronDayMatches(cronExpr: string, now: Date): boolean {
+  const [_minuteField, _hourField, _domField, _monthField, dowField] = cronExpr.trim().split(/\s+/);
+  return fieldMatches(dowField, now.getDay(), 0, 6);
 }
 
 /**

@@ -1,0 +1,5 @@
+# pnpm 10 moved build-script approval out of package.json's "pnpm" field into here.
+# These native deps run lifecycle scripts (postinstall builds/downloads) and must be allowlisted.
+onlyBuiltDependencies:
+  - better-sqlite3
+  - node-llama-cpp

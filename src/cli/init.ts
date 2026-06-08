@@ -31,16 +31,15 @@ ${personality}
 You have access to a persistent memory system. Use it.
 
 - **Daily logs:** Read \`memory/\` files for recent context (\`YYYY-MM-DD.md\`)
-- **Search past conversations:**
+- **Search past conversations** (keyword + semantic, fused):
   \`\`\`bash
-  sqlite3 memory/search.sqlite \\
-    "SELECT path, snippet(chunks_fts, 0, '>>>', '<<<', '...', 40) \\
-     FROM chunks_fts WHERE chunks_fts MATCH 'search terms' \\
-     ORDER BY rank LIMIT 10;"
+  goldfish search "what you're looking for"          # hybrid (default)
+  goldfish search "exact tokens" --mode fts          # keyword only, no model load
   \`\`\`
+  Semantic search needs the embedding model — run \`goldfish embeddings setup\` once.
 - **Write things down:** When something important happens, update today's daily log or create files in \`memory/topics/\`, \`memory/projects/\`, or \`memory/people/\`.
 
-Session transcripts are saved automatically. The memory index is rebuilt nightly.
+Session transcripts are saved automatically. The memory index (FTS + vectors) is rebuilt nightly.
 
 ## Current Focus
 
@@ -144,16 +143,15 @@ export async function init(options: InitOptions): Promise<void> {
         'You have access to a persistent memory system. Use it.',
         '',
         '- **Daily logs:** Read `memory/` files for recent context (`YYYY-MM-DD.md`)',
-        '- **Search past conversations:**',
+        '- **Search past conversations** (keyword + semantic, fused):',
         '  ```bash',
-        '  sqlite3 memory/search.sqlite \\',
-        '    "SELECT path, snippet(chunks_fts, 0, \'>>>\', \'<<<\', \'...\', 40) \\',
-        '     FROM chunks_fts WHERE chunks_fts MATCH \'search terms\' \\',
-        '     ORDER BY rank LIMIT 10;"',
+        '  goldfish search "what you\'re looking for"          # hybrid (default)',
+        '  goldfish search "exact tokens" --mode fts          # keyword only, no model load',
         '  ```',
+        '  Semantic search needs the embedding model — run `goldfish embeddings setup` once.',
         '- **Write things down:** When something important happens, update today\'s daily log or create files in `memory/topics/`, `memory/projects/`, or `memory/people/`.',
         '',
-        'Session transcripts are saved automatically. The memory index is rebuilt nightly.',
+        'Session transcripts are saved automatically. The memory index (FTS + vectors) is rebuilt nightly.',
         '',
       ].join('\n');
       writeFileSync(claudePath, migrationHeader + agentsContent + memorySection);

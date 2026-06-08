@@ -20,6 +20,8 @@ import {
   browserScrape,
   browserScreenshot,
 } from './cli/index.js';
+import { registerSearchCommand } from './cli/search.js';
+import { registerEmbeddingsCommand } from './cli/embeddings.js';
 
 const program = new Command();
 
@@ -119,22 +121,32 @@ program
 // Index memory command
 program
   .command('index-memory')
-  .description('Rebuild the FTS5 memory search index')
+  .description('Rebuild the memory search index (FTS5 + optional semantic vectors)')
   .option('-w, --workspace <path>', 'Workspace path (defaults to GOLDFISH_WORKSPACE)')
   .option('-d, --db <path>', 'Database path (defaults to <workspace>/memory/search.sqlite)')
   .action(async (options) => {
     const { indexWorkspace } = await import('./lib/memoryIndexer.js');
-    const { WORKSPACE_PATH, SEARCH_DB_PATH } = await import('./config.js');
+    const { createEmbedderFromConfig } = await import('./lib/embedder.js');
+    const { WORKSPACE_PATH, SEARCH_DB_PATH, MEMORY_VECTORS_MODE } = await import('./config.js');
 
     const workspace = options.workspace || WORKSPACE_PATH;
     const dbPath = options.db || SEARCH_DB_PATH;
 
     console.log(`Indexing ${workspace} → ${dbPath}`);
-    const stats = indexWorkspace(dbPath, workspace);
+    const embedder = await createEmbedderFromConfig();
+    const stats = await indexWorkspace(dbPath, workspace, {
+      embedder,
+      vectorsMode: MEMORY_VECTORS_MODE,
+    });
     console.log(
       `Index complete: ${stats.indexed} indexed, ${stats.skipped} unchanged, ` +
-      `${stats.removed} removed, ${stats.totalChunks} new chunks`
+      `${stats.removed} removed, ${stats.totalChunks} new chunks` +
+      (stats.vectorEnabled
+        ? `; vectors: ${stats.vectorsInserted} inserted (${stats.vectorBackfilled} backfilled, ` +
+          `${stats.vectorCacheHits} cached, ${stats.vectorFailures} failed)`
+        : ' (FTS only)')
     );
+    await embedder?.dispose?.(); // tear down the native Metal context cleanly
   });
 
 // Schedule commands
@@ -258,5 +270,8 @@ browser
       process.exit(1);
     }
   });
+
+registerSearchCommand(program);
+registerEmbeddingsCommand(program);
 
 program.parse();

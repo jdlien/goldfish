@@ -27,8 +27,8 @@ describe('buildClaudeMd', () => {
 
   it('includes memory search instructions', () => {
     const result = buildClaudeMd('Test', 'Test personality.');
-    expect(result).toContain('sqlite3 memory/search.sqlite');
-    expect(result).toContain('chunks_fts');
+    expect(result).toContain('goldfish search');
+    expect(result).toContain('--mode fts');
   });
 
   it('includes FOCUS.md reference', () => {

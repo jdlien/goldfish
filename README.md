@@ -34,7 +34,7 @@ If you only want to use Claude over Slack, Goldfish does 90% of what OpenClaw di
 | ------------------ | ----------------------------- | ----------------------- |
 | Conversations      | ACP bridge (fragile)          | Claude Code CLI (solid) |
 | Session continuity | ACP session management        | `--resume` flag         |
-| Memory             | Built-in indexer + embeddings | FTS5 + scheduled synthesis |
+| Memory             | Built-in indexer + embeddings | FTS5 + semantic vectors + scheduled synthesis |
 | Channels           | Slack, Telegram, Signal       | Slack                   |
 | Cost               | API Cost                      | Max Plan                |
 
@@ -49,7 +49,7 @@ Slack message  → Goldfish daemon → spawns claude CLI → reads agent config 
 <workspace>/schedule.yaml  → schedule run (every minute)
                → morning / heartbeat / exploration / weekly  → Claude → Slack
                → daily-synthesis (1 AM)                      → Claude summarizes → memory/YYYY-MM-DD.md
-               → index-memory (1:15 AM)                      → rebuilds FTS5     → memory/search.sqlite
+               → index-memory (1:15 AM)                      → FTS5 + vectors    → memory/search.sqlite
 ```
 
 Two launchd agents. One config file. That's the whole thing. See [`docs/deployment-macos.md`](docs/deployment-macos.md) for the full setup.
@@ -194,7 +194,18 @@ Goldfish maintains memory through three layers:
 2. **Post-session transcripts:** Every message exchange is appended to `memory/sessions/YYYY-MM-DD.jsonl`
 3. **Daily synthesis:** A scheduled task consolidates the day's transcripts into a narrative daily log
 
-Search memory from within a Claude session:
+Search memory from within a Claude session — keyword, semantic, or both (fused):
+
+```bash
+goldfish search "what you're looking for"        # hybrid: keyword ∪ semantic (default)
+goldfish search "exact tokens" --mode fts        # keyword only, no model load
+goldfish search "a conceptual question" --json   # stable JSON for tools
+
+# Semantic search needs a one-time model download:
+goldfish embeddings setup
+```
+
+The index is a plain SQLite DB, so raw FTS5 still works as a fallback:
 
 ```bash
 sqlite3 memory/search.sqlite \
