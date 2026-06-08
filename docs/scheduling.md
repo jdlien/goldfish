@@ -51,7 +51,7 @@ These run system operations. No channel needed.
 | Type              | What it does                                                                                   |
 | ----------------- | ---------------------------------------------------------------------------------------------- |
 | `daily-synthesis` | Consolidates the day's session transcripts into a narrative daily log (`memory/YYYY-MM-DD.md`) |
-| `index-memory`    | Rebuilds the FTS5 full-text search index (`memory/search.sqlite`)                              |
+| `index-memory`    | Rebuilds the search index — FTS5 + semantic vectors when a model is installed (`memory/search.sqlite`) |
 
 ## Configuration Reference
 

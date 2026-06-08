@@ -21,6 +21,7 @@ import {
   browserScreenshot,
 } from './cli/index.js';
 import { registerSearchCommand } from './cli/search.js';
+import { registerEmbeddingsCommand } from './cli/embeddings.js';
 
 const program = new Command();
 
@@ -270,5 +271,6 @@ browser
   });
 
 registerSearchCommand(program);
+registerEmbeddingsCommand(program);
 
 program.parse();

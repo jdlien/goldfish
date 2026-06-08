@@ -147,12 +147,12 @@ At 1 AM, `scripts/daily-synthesis.sh`:
 
 ### Layer 4: FTS5 Search Index
 
-`src/lib/memoryIndexer.ts` walks all markdown files and builds a full-text search index. Pure text processing — no API calls, no embeddings, no cost.
+`src/lib/memoryIndexer.ts` walks all markdown/JSONL files and builds the search index. FTS5 keyword indexing is pure text processing — no API calls, no cost. When a local embedding model is installed (`goldfish embeddings setup`), it *additionally* builds sqlite-vec vectors (nomic-embed-text-v1.5, 768-dim, local) so `goldfish search` can fuse keyword + semantic results. Vectors are additive — with no model, the index stays FTS-only.
 
 1. Walks `memory/`, identity files, config files
 2. Chunks by markdown heading or ~500-word blocks
-3. Hashes each file — skips unchanged files on re-index
-4. Upserts chunks into FTS5 virtual table
+3. Hashes each file — skips unchanged files on re-index (but still backfills missing vectors)
+4. Upserts chunks into the FTS5 virtual table and, when enabled, the `chunks_vec` table
 
 Query:
 
