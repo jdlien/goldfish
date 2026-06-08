@@ -20,6 +20,7 @@ import {
   browserScrape,
   browserScreenshot,
 } from './cli/index.js';
+import { registerSearchCommand } from './cli/search.js';
 
 const program = new Command();
 
@@ -267,5 +268,7 @@ browser
       process.exit(1);
     }
   });
+
+registerSearchCommand(program);
 
 program.parse();
