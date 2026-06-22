@@ -26,7 +26,7 @@
     "cron-parser": "^5.5.0",
     "date-fns": "^4.1.0",
     "dotenv": "^17.4.2",
-    "kysely": "^0.28.9",
+    "kysely": "^0.29.2",
     "node-llama-cpp": "3.18.1",
     "patchright": "^1.59.1",
     "pino": "^10.1.0",
