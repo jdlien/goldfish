@@ -22,3 +22,18 @@ fi
 
 # Export workspace if not already set
 export GOLDFISH_WORKSPACE="${GOLDFISH_WORKSPACE:-$HOME/goldfish-workspace}"
+
+# --- Pin Node for Goldfish (see .node-version) ---
+# Native modules (better-sqlite3) are compiled for a specific Node ABI.
+# Letting fnm's *global* default jump to a new MAJOR (e.g. 26 -> 28) under
+# the daemon breaks it with ERR_DLOPEN_FAILED. launchd runs non-interactively,
+# so fnm's use-on-cd hook never fires — resolve the pinned major explicitly
+# and put the newest installed patch of it first on PATH. Patch bumps within
+# the major are ABI-compatible and picked up automatically; a MAJOR bump is
+# deliberate: rebuild native modules (`pnpm rebuild`), then bump
+# GOLDFISH_NODE_MAJOR and .node-version together.
+GOLDFISH_NODE_MAJOR="26"
+_gf_node_bin="$(ls -d "$HOME/.local/share/fnm/node-versions/v${GOLDFISH_NODE_MAJOR}".*/installation/bin 2>/dev/null | sort -V | tail -n 1)"
+if [ -n "$_gf_node_bin" ] && [ -x "$_gf_node_bin/node" ]; then
+  export PATH="$_gf_node_bin:$PATH"
+fi
