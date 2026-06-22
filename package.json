@@ -38,7 +38,7 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
-    "@types/node": "^22.10.5",
+    "@types/node": "^26.0.0",
     "@types/proper-lockfile": "^4.1.4",
     "@vitest/coverage-v8": "^4.0.16",
     "pino-pretty": "^13.1.3",
