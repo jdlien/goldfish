@@ -153,6 +153,41 @@ export const EFFORT_BY_CHANNEL: Record<string, string> = (() => {
 })();
 
 /**
+ * Default model applied to every session unless a channel overrides it.
+ * Unset → omit the flag entirely and let the CLI use its own default.
+ * Set `GOLDFISH_MODEL` to any model the CLI accepts (alias like `opus`,
+ * `sonnet`, `haiku`, `fable`, or a full model ID).
+ */
+export const DEFAULT_MODEL = process.env.GOLDFISH_MODEL;
+
+/**
+ * Per-channel model overrides. JSON map of Slack channel ID → model, e.g.
+ * `GOLDFISH_MODEL_BY_CHANNEL='{"C0A7VB1U6EA":"haiku"}'`.
+ * Lets chatty channels run cheap while work channels get the big brain.
+ * No validation list here — model names churn too fast; an invalid value
+ * surfaces as a CLI error rather than being silently dropped.
+ */
+export const MODEL_BY_CHANNEL: Record<string, string> = (() => {
+  const raw = process.env.GOLDFISH_MODEL_BY_CHANNEL;
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as Record<string, string>;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+})();
+
+/**
+ * Resolve the model for a given channel. Channel override wins over the
+ * global default. Returns `undefined` (omit the flag) when nothing is
+ * configured.
+ */
+export function modelForChannel(channelId: string | undefined): string | undefined {
+  return (channelId ? MODEL_BY_CHANNEL[channelId] : undefined) ?? DEFAULT_MODEL;
+}
+
+/**
  * Resolve the effort level for a given channel. Channel override wins over the
  * global default. Returns `undefined` (omit the flag) when nothing is configured
  * or the configured value isn't a valid level — so a typo degrades to CLI default

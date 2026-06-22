@@ -148,6 +148,12 @@ Day formats: full names (`monday`), abbreviations (`mon`), keywords (`weekdays`,
 | `context` | (none)                           | Extra text appended to the task prompt. Useful for steering a briefing toward specific topics.                               |
 | `enabled` | `true`                           | Set to `false` to disable a task without removing it from the file.                                                          |
 
+#### Model override values
+
+Common IDs (as of June 2026): `claude-sonnet-4-6` (default for synthesis), `claude-opus-4-8` (current top Opus — what Claude Code defaults to), `claude-fable-5` (new tier *above* Opus).
+
+**On `claude-fable-5`:** Anthropic's most powerful model, a rung above Opus. Same 1M context / 128K output as Opus 4.8, but priced at $10/$50 per MTok — **double** Opus, so it burns your usage limits ~2× as fast. Reach for it only when top-end correctness genuinely outweighs cost (a gnarly long-horizon task); Opus 4.8 is the sensible default for nearly everything and Sonnet for volume. API gotcha if anything in Goldfish ever sets thinking explicitly: Fable shares Opus 4.7/4.8's surface (adaptive thinking only — `budget_tokens`/`temperature`/`top_p`/`top_k` all 400, prefills 400) **plus one extra** — an explicit `thinking: {type: "disabled"}` returns a 400 on Fable (it's accepted on Opus). Omit the `thinking` param entirely instead.
+
 ## Commands
 
 ```bash

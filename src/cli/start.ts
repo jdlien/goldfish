@@ -24,6 +24,7 @@ import {
   SHOW_TOOLS,
   validateWorkspace,
   effortForChannel,
+  modelForChannel,
 } from '../config.js';
 
 interface SlackDmMessage {
@@ -186,6 +187,15 @@ export async function start(): Promise<void> {
 
     // Don't respond to our own messages (prevents loops in channels)
     if (botUserId && msg.user === botUserId) return;
+
+    // Deduplicate Slack event retries — Socket Mode re-delivers the same event
+    // if the ack doesn't arrive in time (e.g. during a reconnect). The ts is
+    // the immutable Slack message ID, so a second delivery of the same ts
+    // with the same direction means we already handled it.
+    if (await repo.hasProcessedSlackTs(msg.ts)) {
+      logger.info({ messageTs: msg.ts }, 'Dropping duplicate Slack event (already processed)');
+      return;
+    }
 
     const channelId = msg.channel;
     const sessionKey = msg.thread_ts ?? msg.ts;
@@ -411,6 +421,7 @@ export async function start(): Promise<void> {
             prompt: userMessage,
             resumeSessionId: resumeSessionId ?? undefined,
             effort: effortForChannel(channelId),
+            model: modelForChannel(channelId),
           });
 
           for await (const event of stream) {
@@ -611,6 +622,7 @@ export async function start(): Promise<void> {
             prompt: userMessage,
             resumeSessionId: resumeSessionId ?? undefined,
             effort: effortForChannel(channelId),
+            model: modelForChannel(channelId),
           });
 
           for await (const event of stream) {
@@ -704,6 +716,7 @@ export async function start(): Promise<void> {
           prompt: userMessage,
           resumeSessionId: resumeSessionId ?? undefined,
           effort: effortForChannel(channelId),
+          model: modelForChannel(channelId),
         });
 
         if (!claudeResult.ok) {

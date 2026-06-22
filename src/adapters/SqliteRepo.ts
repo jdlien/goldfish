@@ -218,6 +218,25 @@ export class SqliteRepo {
   }
 
   /**
+   * Check if an inbound message with this Slack ts has already been processed.
+   * Used to deduplicate Slack event retries (Socket Mode re-delivery on ack failure).
+   */
+  async hasProcessedSlackTs(slackTs: string): Promise<boolean> {
+    try {
+      const row = await this.db
+        .selectFrom('messages')
+        .select('id')
+        .where('slack_ts', '=', slackTs)
+        .where('direction', '=', 'inbound')
+        .limit(1)
+        .executeTakeFirst();
+      return row !== undefined;
+    } catch {
+      return false; // on error, allow processing to continue
+    }
+  }
+
+  /**
    * Get recent messages for a session
    */
   async getSessionMessages(

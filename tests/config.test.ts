@@ -9,6 +9,8 @@ async function loadConfig(env: Record<string, string | undefined>) {
   const saved = {
     GOLDFISH_EFFORT: process.env.GOLDFISH_EFFORT,
     GOLDFISH_EFFORT_BY_CHANNEL: process.env.GOLDFISH_EFFORT_BY_CHANNEL,
+    GOLDFISH_MODEL: process.env.GOLDFISH_MODEL,
+    GOLDFISH_MODEL_BY_CHANNEL: process.env.GOLDFISH_MODEL_BY_CHANNEL,
   };
   for (const [k, v] of Object.entries(env)) {
     if (v === undefined) delete process.env[k];
@@ -78,5 +80,51 @@ describe('effortForChannel', () => {
       });
       expect(cfg.effortForChannel('C123')).toBe(level);
     }
+  });
+});
+
+describe('modelForChannel', () => {
+  afterEach(() => vi.resetModules());
+
+  it('returns undefined when nothing is configured', async () => {
+    const cfg = await loadConfig({
+      GOLDFISH_MODEL: undefined,
+      GOLDFISH_MODEL_BY_CHANNEL: undefined,
+    });
+    expect(cfg.modelForChannel('C123')).toBeUndefined();
+    expect(cfg.modelForChannel(undefined)).toBeUndefined();
+  });
+
+  it('applies the global default when set', async () => {
+    const cfg = await loadConfig({
+      GOLDFISH_MODEL: 'sonnet',
+      GOLDFISH_MODEL_BY_CHANNEL: undefined,
+    });
+    expect(cfg.modelForChannel('C123')).toBe('sonnet');
+  });
+
+  it('lets a per-channel override beat the default', async () => {
+    const cfg = await loadConfig({
+      GOLDFISH_MODEL: 'fable',
+      GOLDFISH_MODEL_BY_CHANNEL: JSON.stringify({ C0A7VB1U6EA: 'haiku' }),
+    });
+    expect(cfg.modelForChannel('C0A7VB1U6EA')).toBe('haiku');
+    expect(cfg.modelForChannel('C_OTHER')).toBe('fable');
+  });
+
+  it('passes full model IDs through unvalidated', async () => {
+    const cfg = await loadConfig({
+      GOLDFISH_MODEL: 'claude-sonnet-4-6',
+      GOLDFISH_MODEL_BY_CHANNEL: undefined,
+    });
+    expect(cfg.modelForChannel('C123')).toBe('claude-sonnet-4-6');
+  });
+
+  it('survives malformed JSON in the channel map', async () => {
+    const cfg = await loadConfig({
+      GOLDFISH_MODEL: undefined,
+      GOLDFISH_MODEL_BY_CHANNEL: '{not valid json',
+    });
+    expect(cfg.modelForChannel('C0A7VB1U6EA')).toBeUndefined();
   });
 });
