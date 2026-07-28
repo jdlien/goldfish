@@ -7,6 +7,7 @@ import {
   chunkMarkdown,
   chunkByWords,
   chunkFile,
+  dedupeChunks,
   initSearchDb,
   indexWorkspace,
   findMarkdownFiles,
@@ -121,6 +122,45 @@ describe('chunkByWords', () => {
   });
   it('handles short text as single chunk', () => {
     expect(chunkByWords('Short text.', 500)).toHaveLength(1);
+  });
+});
+
+// --- dedupeChunks ---
+
+describe('dedupeChunks', () => {
+  const chunk = (text: string, startLine = 1) => ({ text, startLine, endLine: startLine });
+
+  it('drops a chunk repeated verbatim later in the same file', () => {
+    const result = dedupeChunks([
+      chunk('## Desk Saga\nOne motor rattled.', 1),
+      chunk('## Morning Coffee\nAeroPress, black.', 5),
+      chunk('## Desk Saga\nOne motor rattled.', 40),
+    ]);
+
+    expect(result).toHaveLength(2);
+    expect(result.map(c => c.startLine)).toEqual([1, 5]);
+  });
+
+  it('keeps the first occurrence, preserving its line numbers', () => {
+    const [first] = dedupeChunks([chunk('## A\nbody', 3), chunk('## A\nbody', 90)]);
+    expect(first.startLine).toBe(3);
+  });
+
+  it('treats whitespace-only differences as duplicates', () => {
+    expect(dedupeChunks([chunk('## A\nbody text'), chunk('## A\n\nbody   text\n')])).toHaveLength(1);
+  });
+
+  it('keeps reworded sections that share a heading', () => {
+    const result = dedupeChunks([
+      chunk('## Desk Saga\nOne motor rattled.'),
+      chunk('## Desk Saga\nOne motor rattled, and the frame racked to 15 degrees.'),
+    ]);
+    expect(result).toHaveLength(2);
+  });
+
+  it('leaves already-unique chunks untouched', () => {
+    const chunks = [chunk('## A\nalpha'), chunk('## B\nbravo'), chunk('## C\ncharlie')];
+    expect(dedupeChunks(chunks)).toEqual(chunks);
   });
 });
 

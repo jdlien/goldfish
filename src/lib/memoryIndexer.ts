@@ -44,6 +44,8 @@ export interface IndexStats {
   skipped: number;
   removed: number;
   totalChunks: number;
+  /** Chunks skipped because an identical chunk already appeared in the same file. */
+  duplicateChunksSkipped: number;
   // Vector stats (zero when vectors are disabled)
   vectorsInserted: number;
   vectorCacheHits: number;
@@ -57,6 +59,12 @@ export interface IndexOptions {
   embedder?: Embedder | null;
   /** off | auto | required. Default 'auto'. */
   vectorsMode?: MemoryVectorsMode;
+  /**
+   * Reindex every file even when its hash is unchanged. Needed after a change to
+   * chunking logic, which the per-file hash cannot detect. Embeddings still come from
+   * the vector cache, so a forced pass is cheap.
+   */
+  force?: boolean;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -98,6 +106,29 @@ export function chunkMarkdown(text: string): Chunk[] {
     return chunkByWords(text, 500);
   }
   return chunks;
+}
+
+/**
+ * Drop chunks that repeat an earlier chunk in the SAME file, keeping the first occurrence.
+ *
+ * Daily memory files can legitimately contain a section twice — a run of the pre-2026-07-27
+ * daily-synthesis job appended a copy of the notes it had just read (see
+ * docs/memory-synthesis-duplication.md). Those files also hold content that exists ONLY in
+ * the synthesis block, so they are not safe to edit on disk; deduping at index time gives
+ * clean search results without touching irreplaceable memory.
+ *
+ * Matching ignores whitespace differences only. Anything with differing wording is a
+ * distinct chunk and is kept — reworded near-duplicates are a judgement call, not ours.
+ */
+export function dedupeChunks(chunks: Chunk[]): Chunk[] {
+  const seen = new Set<string>();
+  return chunks.filter(chunk => {
+    const key = chunk.text.replace(/\s+/g, ' ').trim();
+    if (!key) return true;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /** Split text into chunks of approximately maxWords words. */
@@ -376,7 +407,10 @@ async function reindexFile(
   mode: MemoryVectorsMode,
   stats: IndexStats,
 ): Promise<number> {
-  const chunks = chunkFile(filePath);
+  // Dedupe before embedding — duplicates cost an embedding call as well as a search row.
+  const allChunks = chunkFile(filePath);
+  const chunks = dedupeChunks(allChunks);
+  stats.duplicateChunksSkipped += allChunks.length - chunks.length;
 
   // Embeddings (async) BEFORE the transaction.
   let vectors: (Float32Array | null)[] | null = null;
@@ -491,7 +525,7 @@ export async function indexWorkspace(
   const vctx = setupVectors(db, mode, options.embedder);
 
   const stats: IndexStats = {
-    indexed: 0, skipped: 0, removed: 0, totalChunks: 0,
+    indexed: 0, skipped: 0, removed: 0, totalChunks: 0, duplicateChunksSkipped: 0,
     vectorsInserted: 0, vectorCacheHits: 0, vectorFailures: 0, vectorBackfilled: 0,
     vectorEnabled: !!vctx,
   };
@@ -517,7 +551,7 @@ export async function indexWorkspace(
       const fileHash = hashFile(filePath);
       const row = getFileHash.get(relPath) as { hash: string } | undefined;
 
-      if (row && row.hash === fileHash) {
+      if (row && row.hash === fileHash && !options.force) {
         stats.skipped++;
         if (vctx) await backfillFileVectors(db, relPath, vctx, vectorizedIds, mode, stats);
         continue;

@@ -124,6 +124,7 @@ program
   .description('Rebuild the memory search index (FTS5 + optional semantic vectors)')
   .option('-w, --workspace <path>', 'Workspace path (defaults to GOLDFISH_WORKSPACE)')
   .option('-d, --db <path>', 'Database path (defaults to <workspace>/memory/search.sqlite)')
+  .option('-f, --force', 'Reindex every file, even unchanged ones (use after chunking changes)')
   .action(async (options) => {
     const { indexWorkspace } = await import('./lib/memoryIndexer.js');
     const { createEmbedderFromConfig } = await import('./lib/embedder.js');
@@ -137,10 +138,12 @@ program
     const stats = await indexWorkspace(dbPath, workspace, {
       embedder,
       vectorsMode: MEMORY_VECTORS_MODE,
+      force: options.force,
     });
     console.log(
       `Index complete: ${stats.indexed} indexed, ${stats.skipped} unchanged, ` +
       `${stats.removed} removed, ${stats.totalChunks} new chunks` +
+      (stats.duplicateChunksSkipped > 0 ? ` (${stats.duplicateChunksSkipped} duplicates skipped)` : '') +
       (stats.vectorEnabled
         ? `; vectors: ${stats.vectorsInserted} inserted (${stats.vectorBackfilled} backfilled, ` +
           `${stats.vectorCacheHits} cached, ${stats.vectorFailures} failed)`

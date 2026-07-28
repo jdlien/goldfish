@@ -157,6 +157,9 @@ async function runIndexMemory(): Promise<void> {
     console.log(chalk.dim(`  Indexed: ${stats.indexed} files (${stats.totalChunks} chunks)`));
     console.log(chalk.dim(`  Skipped: ${stats.skipped} unchanged`));
     console.log(chalk.dim(`  Removed: ${stats.removed} deleted`));
+    if (stats.duplicateChunksSkipped > 0) {
+      console.log(chalk.dim(`  Duplicates: ${stats.duplicateChunksSkipped} chunks skipped`));
+    }
     console.log(
       chalk.dim(
         stats.vectorEnabled
