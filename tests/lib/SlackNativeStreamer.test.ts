@@ -795,7 +795,7 @@ describe('SlackNativeStreamer', () => {
       expect(status.issues.map((issue) => issue.reason)).toContain('append_failed');
     });
 
-    it('records rollover_stop_failed for non-finalized old stream stop failures', async () => {
+    it('records rollover_stop_failed but does NOT suspect loss when the ledger is clean', async () => {
       const streamer2 = createMockStreamer();
       mockClient.chatStream
         .mockReturnValueOnce(mockStreamer)
@@ -812,8 +812,37 @@ describe('SlackNativeStreamer', () => {
       await streamer.appendText('y'.repeat(30));
 
       const status = streamer.getDeliveryStatus();
-      expect(status.suspected).toBe(true);
+      // The issue is still recorded and logged for diagnostics...
       expect(status.issues.map((issue) => issue.reason)).toContain('rollover_stop_failed');
+      // ...but a rejected finalize is not missing content. Every append
+      // resolved, so confirmedSentBytes covers rawText and there is nothing
+      // to repost. This is the false positive that duplicated whole replies.
+      expect(status.unsentSuffixLength).toBe(0);
+      expect(status.suspected).toBe(false);
+    });
+
+    it('suspects loss when rollover_stop_failed coincides with stranded text', async () => {
+      const streamer2 = createMockStreamer();
+      mockClient.chatStream
+        .mockReturnValueOnce(mockStreamer)
+        .mockReturnValueOnce(streamer2);
+
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
+      streamer.start();
+
+      await streamer.appendText('x'.repeat(7980));
+      mockStreamer.stop.mockRejectedValueOnce(
+        Object.assign(new Error('http 500'), { statusCode: 500 }),
+      );
+      // The post-rollover append fails silently in the smart-rollover path,
+      // leaving rawText ahead of confirmedSentBytes.
+      mockStreamer.append.mockRejectedValueOnce(new Error('append lost'));
+
+      await streamer.appendText('lost text\n\ntail');
+
+      const status = streamer.getDeliveryStatus();
+      expect(status.hasUnsentSuffix || status.suspected).toBe(true);
+      expect(status.suspected).toBe(true);
     });
 
     it('does not mark delivery suspect when rollover stop sees message_not_in_streaming_state', async () => {
@@ -832,6 +861,39 @@ describe('SlackNativeStreamer', () => {
 
       await streamer.appendText('y'.repeat(30));
 
+      expect(streamer.getDeliveryStatus().suspected).toBe(false);
+    });
+
+    it('budgets sources by serialized size, not URL length, so rollover fires in time', async () => {
+      const streamer2 = createMockStreamer();
+      mockClient.chatStream
+        .mockReturnValueOnce(mockStreamer)
+        .mockReturnValueOnce(streamer2);
+
+      const streamer = new SlackNativeStreamer(mockClient as any, 'C123', 'T1');
+      streamer.start();
+
+      // 6000 bytes of text — under the 6500 soft threshold, so no seek yet.
+      await streamer.appendText('x'.repeat(6000));
+      expect(mockClient.chatStream).toHaveBeenCalledTimes(1);
+
+      // A WebSearch-shaped result: 10 sources, 100-char URLs, `text`
+      // duplicating `url` exactly as toolSources.ts builds them.
+      const sources = Array.from({ length: 10 }, (_, i) => {
+        const url = `https://example.com/${String(i)}/`.padEnd(100, 'a');
+        return { type: 'url' as const, url, text: url };
+      });
+
+      // Old proxy (sum of url lengths) scored this ~1128 bytes → 7128 total →
+      // under 8000 → no rollover → Slack rejects the eventual stop() as
+      // msg_too_long. Serialized it is ~2469 → 8469 → rollover now.
+      expect(JSON.stringify(sources).length).toBeGreaterThan(
+        sources.reduce((sum, s) => sum + s.url.length, 0) * 2,
+      );
+
+      await streamer.completeToolWithOutput('tool-1', '', false, sources);
+
+      expect(mockClient.chatStream).toHaveBeenCalledTimes(2);
       expect(streamer.getDeliveryStatus().suspected).toBe(false);
     });
 

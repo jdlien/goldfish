@@ -13,6 +13,26 @@ export type NativeStreamDeliveryReason =
   | 'final_flush_failed'
   | 'rollover_stop_failed';
 
+/**
+ * Reasons that imply text may actually be missing from Slack.
+ *
+ * Deliberately excludes `rollover_stop_failed`. A failed `chat.stop()` during
+ * rollover means the *finalize* call was rejected — every `append()` before it
+ * had already resolved, so Slack has the content. Treating it as data loss made
+ * `suspected` mean "an API call threw" rather than "content is missing", and the
+ * recovery path reposted the whole response on top of a response the user could
+ * already read. 16 of 19 recorded incidents were this exact false positive.
+ *
+ * `unsentSuffixLength > 0` remains an independent trigger, so a stop failure
+ * that *did* strand text is still caught by the ledger rather than by the reason.
+ */
+const LOSSY_DELIVERY_REASONS: readonly NativeStreamDeliveryReason[] = [
+  'append_failed',
+  'append_retry_failed',
+  'smart_rollover_append_failed',
+  'final_flush_failed',
+];
+
 export interface NativeStreamDeliveryIssue {
   reason: NativeStreamDeliveryReason;
   message: string;
@@ -511,11 +531,19 @@ export class SlackNativeStreamer {
     const truncated = truncateOutput(output);
     const hasSources = sources && sources.length > 0;
     // Approximate payload size for budget tracking: title + truncated
-    // output + sources (as a rough proxy, URL lengths) + JSON overhead.
+    // output + serialized sources + JSON overhead.
+    //
+    // Sources are measured by actual serialized length, not by URL length.
+    // A URLSource is `{ type, url, text }` and `text` currently duplicates
+    // the URL (see toolSources.ts), so a URL-length proxy undercounts the
+    // real payload by roughly 3x. With MAX_SOURCES = 10 that is ~1.3 KB of
+    // invisible spend per WebSearch — enough for the budget to drift under
+    // Slack's real ceiling, skip the proactive rollover, and only discover
+    // the overflow when chat.stop() throws msg_too_long during rollover.
     const approxBytes =
       (title?.length ?? 8) +
       truncated.length +
-      (sources?.reduce((sum, s) => sum + (s.url?.length ?? 0), 0) ?? 0) +
+      (sources ? JSON.stringify(sources).length : 0) +
       120;
 
     // Proactive rollover: if this completion would tip us past the
@@ -740,7 +768,13 @@ export class SlackNativeStreamer {
   getDeliveryStatus(): NativeStreamDeliveryStatus {
     const unsentSuffixLength = Math.max(0, this.rawText.length - this.confirmedSentBytes);
     return {
-      suspected: this.deliveryIssues.length > 0,
+      // Evidence of loss, not evidence of an exception. Issues are still
+      // recorded and logged either way — this only gates whether we repost.
+      suspected:
+        unsentSuffixLength > 0 ||
+        this.deliveryIssues.some((issue) =>
+          LOSSY_DELIVERY_REASONS.includes(issue.reason),
+        ),
       issues: [...this.deliveryIssues],
       rawTextLength: this.rawText.length,
       confirmedSentBytes: this.confirmedSentBytes,
