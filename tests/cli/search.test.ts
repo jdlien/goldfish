@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
 import { indexWorkspace } from '../../src/lib/memoryIndexer.js';
 import { searchMemory, toFtsMatch } from '../../src/lib/memorySearch.js';
-import { formatJson } from '../../src/cli/search.js';
+import { formatJson, formatText } from '../../src/cli/search.js';
 import { l2normalize, type Embedder, type EmbeddingKind } from '../../src/lib/embedder.js';
 
 const DIR = join(__dirname, '..', '__fixtures__', 'search-workspace');
@@ -136,5 +136,56 @@ describe('formatJson', () => {
     expect(typeof parsed.results[0].chunkId).toBe('number');
     expect(typeof parsed.results[0].score).toBe('number');
     expect(typeof parsed.results[0].snippet).toBe('string');
+  });
+
+  /**
+   * Regression guard. `--mode fts` passes a null embedder, which forces
+   * `vectorsAvailable: false` no matter what the index holds — so the old
+   * " · vectors unavailable" note fired on every keyword query and read as an
+   * environment fault. Agents (me) believed it and stopped reaching for
+   * semantic search for months. The two cases must not share a sentence.
+   */
+  describe('keyword-only is reported as a choice, not a fault', () => {
+    it('records what the caller asked for, distinctly from what ran', async () => {
+      const chosen = await searchMemory({ dbPath: DB, query: 'xyzzy', mode: 'fts', embedder: null });
+      expect(chosen.requestedMode).toBe('fts');
+      expect(chosen.mode).toBe('fts');
+
+      const degraded = await searchMemory({
+        dbPath: DB, query: 'xyzzy', mode: 'hybrid', embedder: null,
+      });
+      expect(degraded.requestedMode).toBe('hybrid'); // asked for semantics...
+      expect(degraded.mode).toBe('fts'); // ...and did not get them
+    });
+
+    it('nudges toward hybrid when fts was explicitly chosen', async () => {
+      const r = await searchMemory({ dbPath: DB, query: 'xyzzy', mode: 'fts', embedder: null });
+      const out = formatText(r, false);
+      expect(out).toContain('--mode fts');
+      expect(out).toMatch(/Semantic search was NOT used/i);
+      expect(out).not.toMatch(/vectors unavailable/i); // the old misleading phrasing
+    });
+
+    it('reports a genuine degradation as a real fault with a remedy', async () => {
+      const r = await searchMemory({ dbPath: DB, query: 'xyzzy', mode: 'hybrid', embedder: null });
+      const out = formatText(r, false);
+      expect(out).toMatch(/real fault/i);
+      expect(out).toContain('goldfish embeddings setup');
+    });
+
+    it('says nothing at all when semantic search actually ran', async () => {
+      const r = await searchMemory({
+        dbPath: DB, query: 'xyzzy', mode: 'hybrid', embedder: new ScriptedEmbedder(),
+      });
+      const out = formatText(r, false);
+      expect(out).not.toMatch(/⚠/);
+    });
+
+    it('reports vectorsAvailable as null in JSON when it was never checked', async () => {
+      const r = await searchMemory({ dbPath: DB, query: 'xyzzy', mode: 'fts', embedder: null });
+      const parsed = JSON.parse(formatJson(r));
+      expect(parsed.vectorsAvailable).toBeNull(); // not `false` — we never looked
+      expect(parsed.semanticSearchUsed).toBe(false);
+    });
   });
 });

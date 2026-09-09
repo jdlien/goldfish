@@ -10,6 +10,19 @@ if [ -f "$HOME/.zshrc" ]; then
   source "$HOME/.zshrc" 2>/dev/null
 fi
 
+# --- Neutralize zoxide's directory-tracking hook ---
+# Sourcing ~/.zshrc above also runs `eval "$(zoxide init zsh)"`, which registers
+# __zoxide_hook in chpwd_functions. Nothing gates that on the shell being
+# interactive, so it installs here too — and every plist runs `cd ~/code/goldfish`
+# after sourcing this file. The scheduler fires every 60s, so that `cd` would call
+# `zoxide add` 1440 times a day, pinning ~/code/goldfish at zoxide's 9999 rank
+# ceiling. Because zoxide ages its database whenever total rank exceeds _ZO_MAXAGE
+# (default 10000), one entry hogging the entire budget keeps the database
+# permanently in aging mode and evicts every genuinely-used directory.
+# Overriding the hook is shell-agnostic, so it covers the bash daemon too.
+# See docs/deployment-macos.md, "Sourcing Your Shell Config Has Side Effects".
+__zoxide_hook() { :; }
+
 # Goldfish repo location — update this if you cloned somewhere else
 export GOLDFISH_HOME="${GOLDFISH_HOME:-$HOME/code/goldfish}"
 

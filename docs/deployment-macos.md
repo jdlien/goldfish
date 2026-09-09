@@ -167,8 +167,11 @@ Homebrew, fnm, pyenv, etc. Every Goldfish plist invokes its command through
 `launchd/goldfish-env.sh`, which:
 
 1. Sources `~/.zprofile` and `~/.zshrc` (bringing in your normal PATH, fnm, pyenv)
-2. Loads `.env` from the goldfish repo (Slack tokens, config)
-3. Exports `GOLDFISH_WORKSPACE` if not already set
+2. Neutralizes zoxide's `chpwd` hook, if your shell config installed one — see
+   [Sourcing Your Shell Config Has Side Effects](#sourcing-your-shell-config-has-side-effects)
+3. Loads `.env` from the goldfish repo (Slack tokens, config)
+4. Exports `GOLDFISH_WORKSPACE` if not already set
+5. Pins Node to the major version in `.node-version` (native modules are ABI-specific)
 
 If your shell setup is non-standard — bash instead of zsh, a different
 profile location, a version manager Goldfish doesn't know about — edit
@@ -186,6 +189,43 @@ All three binaries should resolve. If any don't, that's what launchd will see,
 and your jobs will fail with "command not found."
 
 ## Launchd Gotchas
+
+### Sourcing Your Shell Config Has Side Effects
+
+`goldfish-env.sh` sources `~/.zshrc` to inherit your PATH. That is convenient,
+but it runs *all* of your shell config — including anything that installs hooks.
+Those hooks then fire inside the launchd job.
+
+The concrete case this bit us: [zoxide](https://github.com/ajeetdsouza/zoxide)
+(the `z` command) tracks directories by registering `__zoxide_hook` in
+`chpwd_functions`. Nothing gates that on the shell being interactive, so it
+installed in the scheduler's `zsh -c` too, and the `cd ~/code/goldfish` in each
+plist triggered it. The scheduler fires every 60 seconds, so:
+
+- `zoxide add` ran 1,440 times a day against `~/code/goldfish` (+4 rank each)
+- That entry saturated zoxide's 9999 rank ceiling within two days
+- zoxide ages its database whenever total rank exceeds `_ZO_MAXAGE` (default
+  10000), so a single entry consuming the whole budget left the database
+  permanently in aging mode
+- Every other directory decayed ~10%/day and was eventually deleted outright —
+  `z some-project` would report a directory it had never heard of, for projects
+  used constantly
+
+`goldfish-env.sh` now overrides `__zoxide_hook` with a no-op after sourcing your
+shell config. If you hit similar trouble with another `chpwd`/`precmd` hook
+(direnv, auto-nvm, custom prompt tooling), the same fix applies: override or
+unregister it at the end of `goldfish-env.sh`.
+
+Note that the hook stays *registered* in `chpwd_functions` — only its body is
+replaced — so seeing the name in that array is expected and not a sign the fix
+failed. To check whether a job is still writing to your zoxide database, run a
+tick against a throwaway one and see whether anything lands in it:
+
+```bash
+d=$(mktemp -d)
+_ZO_DATA_DIR="$d" zsh -c 'source ~/code/goldfish/launchd/goldfish-env.sh >/dev/null 2>&1 && cd ~/code/goldfish'
+_ZO_DATA_DIR="$d" zoxide query -ls    # should print nothing
+```
 
 ### Sleeping Machines Miss Scheduled Tasks
 

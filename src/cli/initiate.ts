@@ -26,6 +26,32 @@ export interface InitiateOptions {
 }
 
 /**
+ * Turn budget per check-in type.
+ *
+ * These are ceilings, not targets — an unused turn costs nothing, so the
+ * budgets are deliberately generous. A morning check-in reads a couple of
+ * files and writes a paragraph. An exploration reads identity files, searches
+ * the web, reads memory, writes ~2,000 words, and then updates TOPICS: a
+ * different order of work entirely.
+ *
+ * Previously every type shared a hardcoded 15. That silently killed three
+ * explorations in a row (2026-07-31, 08-01, 08-02), each ending at
+ * num_turns: 16 with stop_reason "tool_use" — and two of the three had
+ * already written the finished essay to disk, losing only the Slack
+ * announcement. The one that genuinely died spent its whole budget on ~25
+ * sequential shell calls doing forensics and ran out one call before writing
+ * a word.
+ */
+const MAX_TURNS_BY_TYPE: Record<InitiateOptions['type'], number> = {
+  morning: 25,
+  weekly: 30,
+  exploration: 60,
+  heartbeat: 25,
+};
+
+const FALLBACK_MAX_TURNS = 25;
+
+/**
  * Read a prompt file from the workspace's prompts/ directory.
  * Returns the file contents with {{DATE}} replaced, or null if not found.
  */
@@ -241,7 +267,7 @@ export async function initiate(options: InitiateOptions): Promise<void> {
     console.log(chalk.dim('Running Claude...'));
     const claudeResult = await claudeRunner.run({
       prompt,
-      maxTurns: 15,
+      maxTurns: MAX_TURNS_BY_TYPE[type] ?? FALLBACK_MAX_TURNS,
       model: options.model,
     });
 

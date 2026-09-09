@@ -29,7 +29,22 @@ export interface SearchHit {
 
 export interface SearchResult {
   query: string;
+  /** The mode actually executed (may differ from `requestedMode` on degradation). */
   mode: SearchMode;
+  /**
+   * What the caller asked for, verbatim — `undefined` means "no preference, pick
+   * the best available". Needed to tell two very different situations apart that
+   * otherwise look identical downstream: the caller *chose* keyword-only, versus
+   * the caller wanted semantics and couldn't have them.
+   */
+  requestedMode?: SearchMode;
+  /**
+   * Whether the vector index was usable. ⚠️ Only meaningful when an embedder was
+   * supplied: `--mode fts` deliberately passes `null`, which forces this to
+   * `false` regardless of what the index actually contains. Never render this as
+   * a bare "vectors unavailable" — for months that message was printed on every
+   * single fts query and read as a fault report, when it was a tautology.
+   */
   vectorsAvailable: boolean;
   hits: SearchHit[];
 }
@@ -171,7 +186,13 @@ export async function searchMemory(opts: SearchOptions): Promise<SearchResult> {
     const vecHits =
       mode === 'fts' ? [] : await vectorSearch(db, embedder as Embedder, query, poolN);
 
-    return { query, mode, vectorsAvailable, hits: fuse(ftsHits, vecHits, k) };
+    return {
+      query,
+      mode,
+      requestedMode: opts.mode,
+      vectorsAvailable,
+      hits: fuse(ftsHits, vecHits, k),
+    };
   } finally {
     db.close();
   }

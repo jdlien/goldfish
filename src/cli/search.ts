@@ -16,13 +16,39 @@ import { searchMemory, type SearchMode, type SearchResult } from '../lib/memoryS
 
 const MODES: SearchMode[] = ['hybrid', 'fts', 'vector'];
 
+/**
+ * Status line under the result count.
+ *
+ * The old version printed " · vectors unavailable" whenever `vectorsAvailable`
+ * was false — which, because `--mode fts` passes a null embedder, meant it
+ * appeared on *every* fts query no matter what the index held. It read as a
+ * fault report about the environment. It was a restatement of the flag you had
+ * just typed, and it trained the reader to accept keyword-only results as the
+ * best available. Two different situations need two different sentences.
+ */
+function statusNote(result: SearchResult): string {
+  if (result.requestedMode === 'fts') {
+    return chalk.yellow(
+      "\n  ⚠ Keyword-only, because you passed --mode fts. Semantic search was NOT used —\n" +
+        '    a memory phrased differently than your query cannot be found this way.\n' +
+        '    Drop the flag for hybrid (keyword + semantic). It costs about 2 seconds.',
+    );
+  }
+  if (!result.vectorsAvailable) {
+    return chalk.red(
+      '\n  ⚠ Vector index unusable — degraded to keyword-only. This is a real fault,\n' +
+        '    not a preference. Fix: `goldfish embeddings setup`, then `goldfish index-memory`.',
+    );
+  }
+  return '';
+}
+
 export function formatText(result: SearchResult, explain: boolean): string {
   const lines: string[] = [];
   lines.push(
     chalk.dim(
-      `${result.hits.length} result${result.hits.length === 1 ? '' : 's'} · mode: ${result.mode}` +
-        (result.vectorsAvailable ? '' : ' · vectors unavailable'),
-    ),
+      `${result.hits.length} result${result.hits.length === 1 ? '' : 's'} · mode: ${result.mode}`,
+    ) + statusNote(result),
   );
   if (result.hits.length === 0) {
     lines.push(chalk.dim('  (no matches)'));
@@ -49,7 +75,10 @@ export function formatJson(result: SearchResult): string {
     {
       query: result.query,
       mode: result.mode,
-      vectorsAvailable: result.vectorsAvailable,
+      requestedMode: result.requestedMode,
+      // Only meaningful when semantics were actually attempted — see SearchResult.
+      vectorsAvailable: result.requestedMode === 'fts' ? null : result.vectorsAvailable,
+      semanticSearchUsed: result.mode !== 'fts',
       count: result.hits.length,
       results: result.hits.map((h) => ({
         path: h.path,
