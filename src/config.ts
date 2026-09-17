@@ -173,6 +173,13 @@ export const CHANNEL_BRIEF: Record<string, string> = (() => {
   }
 })();
 
+/**
+ * Slack user ID of the workspace owner. Used to decide whether a DM needs a
+ * sender header: a DM from anyone else is not the person the agent's identity
+ * files are written about. Unset -> DMs are never annotated (legacy behaviour).
+ */
+export const OWNER_USER_ID = process.env.GOLDFISH_OWNER_USER_ID;
+
 export function briefForChannel(channelId: string | undefined): string | undefined {
   return channelId ? CHANNEL_BRIEF[channelId] : undefined;
 }

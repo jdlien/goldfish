@@ -26,6 +26,7 @@ import {
   effortForChannel,
   modelForChannel,
   briefForChannel,
+  OWNER_USER_ID,
 } from '../config.js';
 
 interface SlackDmMessage {
@@ -376,7 +377,8 @@ export async function start(): Promise<void> {
       // with more than one human the agent cannot tell who it is talking to and
       // will assume it is the owner. Prepend the facts it cannot otherwise know.
       // Added after a session answered JD's dad with JD's private status board.
-      if (isListenChannel) {
+      const senderIsOwner = OWNER_USER_ID ? msg.user === OWNER_USER_ID : true;
+      if (isListenChannel || !senderIsOwner) {
         const senderId = msg.user ?? 'unknown';
         const senderName = await slackClient!.getUserDisplayName(senderId);
         const brief = briefForChannel(channelId);
