@@ -59,6 +59,7 @@ export interface SlackMessage {
 export class SlackBoltClient {
   private app: App | null = null;
   private config: SlackConfig;
+  private userNameCache = new Map<string, string>();
 
   constructor(config: SlackConfig) {
     this.config = config;
@@ -205,6 +206,32 @@ export class SlackBoltClient {
       return err(
         createError(ErrorCodes.SLACK_SEND_FAILED, 'Failed to send message', error)
       );
+    }
+  }
+
+  /**
+   * Resolve a Slack user ID to a human-readable name, cached for the
+   * lifetime of the process. Falls back to the raw ID so callers never
+   * have to handle a missing name.
+   */
+  async getUserDisplayName(userId: string): Promise<string> {
+    const cached = this.userNameCache.get(userId);
+    if (cached) return cached;
+    if (!this.app) return userId;
+
+    try {
+      const result = await this.app.client.users.info({ user: userId });
+      const profile = result.user?.profile;
+      const name =
+        result.user?.real_name ||
+        profile?.display_name ||
+        result.user?.name ||
+        userId;
+      this.userNameCache.set(userId, name);
+      return name;
+    } catch (error) {
+      logger.warn({ error, userId }, 'Could not resolve user display name');
+      return userId;
     }
   }
 

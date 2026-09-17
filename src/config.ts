@@ -153,6 +153,31 @@ export const EFFORT_BY_CHANNEL: Record<string, string> = (() => {
 })();
 
 /**
+ * Per-channel briefing text. JSON map of Slack channel ID -> a short note
+ * injected at the top of every prompt in that channel, e.g.
+ * `GOLDFISH_CHANNEL_BRIEF='{"C0123456789":"Shared channel with an external collaborator..."}'`.
+ *
+ * Why this exists: a Slack message arrives as bare text with no author and no
+ * room attached. In a channel containing someone other than the owner, the
+ * agent has no way to know who it is talking to, and defaults to assuming it
+ * is the owner. That default leaked private context on 2026-09-17.
+ */
+export const CHANNEL_BRIEF: Record<string, string> = (() => {
+  const raw = process.env.GOLDFISH_CHANNEL_BRIEF;
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as Record<string, string>;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+})();
+
+export function briefForChannel(channelId: string | undefined): string | undefined {
+  return channelId ? CHANNEL_BRIEF[channelId] : undefined;
+}
+
+/**
  * Default model applied to every session unless a channel overrides it.
  * Unset → omit the flag entirely and let the CLI use its own default.
  * Set `GOLDFISH_MODEL` to any model the CLI accepts (alias like `opus`,

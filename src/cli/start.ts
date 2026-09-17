@@ -25,6 +25,7 @@ import {
   validateWorkspace,
   effortForChannel,
   modelForChannel,
+  briefForChannel,
 } from '../config.js';
 
 interface SlackDmMessage {
@@ -370,6 +371,27 @@ export async function start(): Promise<void> {
         );
       }
 
+      // --- Sender + room context ---
+      // A Slack message arrives as bare text: no author, no room. In a channel
+      // with more than one human the agent cannot tell who it is talking to and
+      // will assume it is the owner. Prepend the facts it cannot otherwise know.
+      // Added after a session answered JD's dad with JD's private status board.
+      if (isListenChannel) {
+        const senderId = msg.user ?? 'unknown';
+        const senderName = await slackClient!.getUserDisplayName(senderId);
+        const brief = briefForChannel(channelId);
+        const header = [
+          `[Goldfish context — not written by the sender]`,
+          `Channel: ${channelId}`,
+          `Message from: ${senderName} (${senderId})`,
+          brief ? `Channel note: ${brief}` : null,
+          `[end context]`,
+        ]
+          .filter(Boolean)
+          .join('\n');
+        userMessage = `${header}\n\n${userMessage}`;
+      }
+
       // Save inbound message
       await repo.saveMessage({
         sessionId: session.id,
@@ -422,6 +444,9 @@ export async function start(): Promise<void> {
             resumeSessionId: resumeSessionId ?? undefined,
             effort: effortForChannel(channelId),
             model: modelForChannel(channelId),
+            // chat.startStream renders markdown server-side, so the model is
+            // told tables are available. The legacy branch below must not.
+            nativeMarkdown: true,
           });
 
           for await (const event of stream) {
