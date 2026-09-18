@@ -50,12 +50,34 @@ export interface VoiceMessagePart {
   transcriptPath?: string;
 }
 
+export type DocumentState =
+  /** Was a scan; now has a text layer and a markdown sidecar. */
+  | 'ocr_added'
+  /** Was a scan; OCR did not work. Still unsearchable. */
+  | 'ocr_failed'
+  /** Was a scan; too many pages to OCR inside the session lock. */
+  | 'too_many_pages';
+
+export interface DocumentPart {
+  state: DocumentState;
+  /** The PDF as it arrived. Always present, in every state. */
+  originalPath: string;
+  pageCount?: number;
+  /** Searchable markdown. Cheap to read and greppable; the primary artifact. */
+  markdownPath?: string;
+  /** OCR'd PDF — page images preserved, for checking what the text claims. */
+  ocrPdfPath?: string;
+  /** Pages tesseract itself reported as low confidence. */
+  lowConfidencePages?: number[];
+}
+
 export interface ComposeUserMessageInput {
   /** The user's typed text, if any. */
   text: string;
   /** Paths the agent can read directly. Never contains audio. */
   attachmentPaths: string[];
   voiceParts: VoiceMessagePart[];
+  documentParts: DocumentPart[];
   /** Human-readable descriptions of files that couldn't be handled. */
   skipped: string[];
 }
@@ -76,9 +98,47 @@ const VOICE_STATE_LABEL: Record<VoiceState, string> = {
  * voice content could arrive by another route.
  */
 export function hasProcessedContent(
-  input: Pick<ComposeUserMessageInput, 'attachmentPaths' | 'voiceParts'>,
+  input: Pick<
+    ComposeUserMessageInput,
+    'attachmentPaths' | 'voiceParts' | 'documentParts'
+  >,
 ): boolean {
-  return input.attachmentPaths.length > 0 || input.voiceParts.length > 0;
+  return (
+    input.attachmentPaths.length > 0 ||
+    input.voiceParts.length > 0 ||
+    input.documentParts.length > 0
+  );
+}
+
+/**
+ * A scanned PDF, and what we managed to do about it.
+ *
+ * The original path is carried in every state so the agent can retry OCR
+ * itself, or look at a page image to check something the text claims. The
+ * low-confidence count is surfaced rather than buried, because OCR of a
+ * photocopy is legible for gist and wrong in the characters, and a figure
+ * quoted out of it without that warning is an artifact presented as a fact.
+ */
+function renderDocumentPart(part: DocumentPart): string {
+  const pages = part.pageCount ? `${part.pageCount} pages` : 'unknown length';
+
+  if (part.state === 'ocr_added') {
+    const confidence = part.lowConfidencePages?.length
+      ? `${part.lowConfidencePages.length} page(s) LOW CONFIDENCE ` +
+        `(${part.lowConfidencePages.join(', ')})`
+      : 'no pages flagged';
+    return (
+      `[Scanned PDF · ${pages} · OCR'd, ${confidence} · ` +
+      `searchable text: ${part.markdownPath} · ` +
+      `page images: ${part.ocrPdfPath} · original: ${part.originalPath}]`
+    );
+  }
+
+  const why =
+    part.state === 'too_many_pages'
+      ? 'too many pages to OCR'
+      : 'OCR failed';
+  return `[Scanned PDF · ${pages} · ${why}, no searchable text · original: ${part.originalPath}]`;
 }
 
 /** `19s`, `2m 5s`, `74m`, or `unknown length`. */
@@ -131,6 +191,10 @@ export function composeUserMessage(input: ComposeUserMessageInput): string {
 
   for (const part of input.voiceParts) {
     sections.push(renderVoicePart(part));
+  }
+
+  for (const part of input.documentParts) {
+    sections.push(renderDocumentPart(part));
   }
 
   if (input.attachmentPaths.length > 0) {

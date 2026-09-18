@@ -4,6 +4,7 @@ import {
   hasProcessedContent,
   formatDuration,
   type VoiceMessagePart,
+  type DocumentPart,
 } from '../../src/lib/composeUserMessage.js';
 
 const voice = (o: Partial<VoiceMessagePart> = {}): VoiceMessagePart => ({
@@ -15,7 +16,7 @@ const voice = (o: Partial<VoiceMessagePart> = {}): VoiceMessagePart => ({
   ...o,
 });
 
-const base = { text: '', attachmentPaths: [], voiceParts: [], skipped: [] };
+const base = { text: '', attachmentPaths: [], voiceParts: [], documentParts: [], skipped: [] };
 
 describe('formatDuration', () => {
   it('renders seconds, minutes, and unknown', () => {
@@ -64,9 +65,9 @@ describe('composeUserMessage — the three traps', () => {
   // Trap B: "was anything processed?" stopped meaning "attachmentPaths is
   // empty" the moment voice content could arrive by another route.
   it('counts voice content as processed content', () => {
-    expect(hasProcessedContent({ attachmentPaths: [], voiceParts: [voice()] })).toBe(true);
-    expect(hasProcessedContent({ attachmentPaths: ['/a.png'], voiceParts: [] })).toBe(true);
-    expect(hasProcessedContent({ attachmentPaths: [], voiceParts: [] })).toBe(false);
+    expect(hasProcessedContent({ attachmentPaths: [], voiceParts: [voice()], documentParts: [] })).toBe(true);
+    expect(hasProcessedContent({ attachmentPaths: ['/a.png'], voiceParts: [], documentParts: [] })).toBe(true);
+    expect(hasProcessedContent({ attachmentPaths: [], voiceParts: [], documentParts: [] })).toBe(false);
   });
 });
 
@@ -109,16 +110,27 @@ describe('composeUserMessage — rendering', () => {
     expect(out).not.toContain('[end voice message]');
   });
 
-  it('keeps typed text first, then voice, then attachments, then skips', () => {
+  it('keeps typed text first, then voice, then documents, then attachments, then skips', () => {
     const out = composeUserMessage({
       text: 'please',
       attachmentPaths: ['/att/a.png', '/att/b.png'],
       voiceParts: [voice()],
+      documentParts: [
+        {
+          state: 'ocr_added',
+          originalPath: '/att/lease.pdf',
+          pageCount: 58,
+          markdownPath: '/att/lease.md',
+          ocrPdfPath: '/att/lease.ocr.pdf',
+          lowConfidencePages: [40],
+        },
+      ],
       skipped: ['x.zip (unsupported type)'],
     });
     const order = [
       out.indexOf('please'),
       out.indexOf('[Voice message'),
+      out.indexOf('[Scanned PDF'),
       out.indexOf('[Attached files:'),
       out.indexOf('[Could not process:'),
     ];
@@ -179,5 +191,68 @@ describe('composeUserMessage — uploaded recordings are not voice messages', ()
     const attached = out.split('\n').find((l) => l.startsWith('[Attached'));
     expect(attached).not.toContain('.mp3]');
     expect(attached).not.toContain('.mp3,');
+  });
+});
+
+
+describe('composeUserMessage — scanned documents', () => {
+  const doc = (o: Partial<DocumentPart> = {}): DocumentPart => ({
+    state: 'ocr_added',
+    originalPath: '/att/lease.pdf',
+    pageCount: 58,
+    markdownPath: '/att/lease.md',
+    ocrPdfPath: '/att/lease.ocr.pdf',
+    lowConfidencePages: [27, 33, 40],
+    ...o,
+  });
+
+  // The count is surfaced, not buried: OCR of a photocopy is legible for gist
+  // and wrong in the characters, so a figure quoted without that warning is an
+  // artifact presented as a fact.
+  it('surfaces the low-confidence pages', () => {
+    const out = composeUserMessage({ ...base, documentParts: [doc()] });
+    expect(out).toContain('3 page(s) LOW CONFIDENCE (27, 33, 40)');
+  });
+
+  it('points at the markdown for searching and the PDF for checking', () => {
+    const out = composeUserMessage({
+      ...base,
+      attachmentPaths: ['/att/lease.md'],
+      documentParts: [doc()],
+    });
+    expect(out).toContain('searchable text: /att/lease.md');
+    expect(out).toContain('page images: /att/lease.ocr.pdf');
+    expect(out).toContain('original: /att/lease.pdf');
+    // The 31MB PDF is NOT a default read target.
+    expect(out).toContain('[Attached file: /att/lease.md]');
+  });
+
+  it('says plainly when there is no searchable text', () => {
+    for (const state of ['ocr_failed', 'too_many_pages'] as const) {
+      const out = composeUserMessage({ ...base, documentParts: [doc({ state })] });
+      expect(out).toContain('no searchable text');
+      expect(out).toContain('original: /att/lease.pdf');
+    }
+  });
+
+  it('keeps the original path in every state, so OCR can be retried', () => {
+    for (const state of ['ocr_added', 'ocr_failed', 'too_many_pages'] as const) {
+      expect(composeUserMessage({ ...base, documentParts: [doc({ state })] }))
+        .toContain('/att/lease.pdf');
+    }
+  });
+
+  it('notes when nothing was flagged, without implying correctness', () => {
+    const out = composeUserMessage({
+      ...base,
+      documentParts: [doc({ lowConfidencePages: [] })],
+    });
+    expect(out).toContain('no pages flagged');
+  });
+
+  // A document-only message must not be discarded by the "nothing to send" guard.
+  it('a document-only message is never empty', () => {
+    expect(composeUserMessage({ ...base, documentParts: [doc()] }).trim()).not.toBe('');
+    expect(hasProcessedContent({ attachmentPaths: [], voiceParts: [], documentParts: [doc()] })).toBe(true);
   });
 });

@@ -101,6 +101,34 @@ export const MAX_TRANSCRIBE_TOTAL_DURATION_MS = numEnv(
   15 * 60 * 1000,
 );
 
+/**
+ * PDF OCR toolchain. ALL ABSOLUTE.
+ *
+ * Read off the live daemon with `ps eww`, its PATH is the fnm node bin plus a
+ * few odds and ends — it contains NEITHER /opt/homebrew/bin NOR /usr/local/bin,
+ * because launchd starts it with a minimal PATH. A bare `ocrmypdf` is ENOENT.
+ * Same trap as MW_BIN_PATH above, which has now cost two separate incidents.
+ */
+export const PDFTOTEXT_BIN_PATH =
+  process.env.GOLDFISH_PDFTOTEXT_PATH ?? '/opt/homebrew/bin/pdftotext';
+export const QPDF_BIN_PATH =
+  process.env.GOLDFISH_QPDF_PATH ?? '/opt/homebrew/bin/qpdf';
+export const OCRMYPDF_BIN_PATH =
+  process.env.GOLDFISH_OCRMYPDF_PATH ?? '/opt/homebrew/bin/ocrmypdf';
+
+/**
+ * Longest scanned PDF we'll OCR inline.
+ *
+ * Measured 28.8s for 58 pages at --jobs 8. OCR runs inside the per-session
+ * lock, so this is a wall-clock budget wearing a page count — 120 pages is
+ * roughly a minute of someone waiting for a reply.
+ */
+export const MAX_OCR_PAGES = numEnv(process.env.GOLDFISH_MAX_OCR_PAGES, 120);
+
+/** Parallel OCR workers. The host is a 12-core M2 Max someone else is using. */
+export const OCR_JOBS = numEnv(process.env.GOLDFISH_OCR_JOBS, 8);
+
+
 /** Memory search database */
 export const SEARCH_DB_PATH =
   process.env.GOLDFISH_SEARCH_DB ?? join(WORKSPACE_PATH, 'memory', 'search.sqlite');

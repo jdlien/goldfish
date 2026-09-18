@@ -57,4 +57,8 @@ export const ErrorCodes = {
   AUDIO_TRANSCRIPTION_FAILED: 'AUDIO_TRANSCRIPTION_FAILED',
   /** Transcription succeeded but the recording contained no speech. */
   AUDIO_NO_SPEECH: 'AUDIO_NO_SPEECH',
+  /** A scanned PDF could not be given a text layer. */
+  PDF_OCR_FAILED: 'PDF_OCR_FAILED',
+  /** A scanned PDF has more pages than we'll OCR inside the session lock. */
+  PDF_OCR_TOO_LARGE: 'PDF_OCR_TOO_LARGE',
 } as const;

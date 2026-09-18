@@ -25,7 +25,9 @@ import {
   composeUserMessage,
   hasProcessedContent,
   type VoiceMessagePart,
+  type DocumentPart,
 } from '../lib/composeUserMessage.js';
+import { PdfTextLayer } from '../adapters/PdfTextLayer.js';
 import { ErrorCodes } from '../domain/services/result.js';
 import {
   SESSION_EXPIRY_MS,
@@ -161,6 +163,7 @@ export async function start(): Promise<void> {
   const slackBotToken = process.env.SLACK_BOT_TOKEN ?? '';
   const fileDownloader = new SlackFileDownloader(slackBotToken);
   const audioTranscriber = new AudioTranscriber();
+  const pdfTextLayer = new PdfTextLayer();
 
   // Verify Claude is available
   const claudeCheck = await claudeRunner.checkAvailable();
@@ -322,6 +325,7 @@ export async function start(): Promise<void> {
         const filesToProcess = msg.files!.slice(0, MAX_ATTACHMENTS_PER_MESSAGE);
         const attachmentPaths: string[] = [];
         const voiceParts: VoiceMessagePart[] = [];
+        const documentParts: DocumentPart[] = [];
         const skipped: string[] = [];
         let scopeMissing = false;
         // Transcription is synchronous and runs inside the per-session lock, so
@@ -334,6 +338,10 @@ export async function start(): Promise<void> {
         // one queues behind that orphan and waits its own full deadline. Ten
         // 89-second notes would sit inside the lock for ~11 minutes.
         let transcriberWedged = false;
+        // Same reasoning as transcriberWedged: if OCR blew its deadline once,
+        // the next scan in the same message will too, and each one is another
+        // minute of the session lock held.
+        let ocrWedged = false;
 
         for (const file of filesToProcess) {
           const downloadResult = await fileDownloader.download(file);
@@ -364,6 +372,64 @@ export async function start(): Promise<void> {
           const isAudio =
             downloaded.isVoiceMessage ||
             downloaded.mimetype.toLowerCase().startsWith('audio/');
+
+          const isPdf =
+            downloaded.mimetype.toLowerCase() === 'application/pdf' ||
+            downloaded.path.toLowerCase().endsWith('.pdf');
+
+          if (isPdf) {
+            // Cheap first (44ms on a 33MB file): does it already have text?
+            // A scan yields one form-feed per page and nothing else.
+            const existing = await pdfTextLayer.extractText(downloaded.path);
+            const pages = await pdfTextLayer.pageCount(downloaded.path);
+
+            if (!pages || !pdfTextLayer.needsOcr(existing, pages)) {
+              attachmentPaths.push(downloaded.path);
+              continue;
+            }
+
+            if (ocrWedged) {
+              documentParts.push({
+                state: 'ocr_failed',
+                originalPath: downloaded.path,
+                pageCount: pages,
+              });
+              attachmentPaths.push(downloaded.path);
+              continue;
+            }
+
+            const ocr = await pdfTextLayer.addTextLayer(downloaded.path, pages);
+            if (ocr.ok) {
+              documentParts.push({
+                state: 'ocr_added',
+                originalPath: downloaded.path,
+                pageCount: pages,
+                markdownPath: ocr.value.markdownPath,
+                ocrPdfPath: ocr.value.ocrPdfPath,
+                lowConfidencePages: ocr.value.lowConfidencePages,
+              });
+              // Only the markdown is attached. The 31MB PDF stays a path in
+              // the marker — reading it means rendering page images, which is
+              // the right tool for checking a figure and the wrong one for
+              // finding it.
+              attachmentPaths.push(ocr.value.markdownPath);
+            } else {
+              const tooLarge = ocr.error.code === ErrorCodes.PDF_OCR_TOO_LARGE;
+              if (!tooLarge) ocrWedged = true;
+              documentParts.push({
+                state: tooLarge ? 'too_many_pages' : 'ocr_failed',
+                originalPath: downloaded.path,
+                pageCount: pages,
+              });
+              // No text layer, so the page images are all there is.
+              attachmentPaths.push(downloaded.path);
+              logger.warn(
+                { error: ocr.error, fileId: file.id, pages },
+                'PDF OCR unsuccessful',
+              );
+            }
+            continue;
+          }
 
           if (!isAudio) {
             attachmentPaths.push(downloaded.path);
@@ -436,6 +502,7 @@ export async function start(): Promise<void> {
           text: userMessage,
           attachmentPaths,
           voiceParts,
+          documentParts,
           skipped,
         });
 
@@ -443,7 +510,7 @@ export async function start(): Promise<void> {
         // Anyone else gets a plain apology: the fix is developer instructions
         // ("add the files:read scope, reinstall the app"), and delivering those
         // to, say, a parent in a shared channel is noise they can't act on.
-        if (scopeMissing && !hasProcessedContent({ attachmentPaths, voiceParts })) {
+        if (scopeMissing && !hasProcessedContent({ attachmentPaths, voiceParts, documentParts })) {
           await say({
             text: senderIsOwner
               ? '📎 I can see your attachment, but my Slack app is missing the `files:read` scope. ' +
@@ -467,6 +534,7 @@ export async function start(): Promise<void> {
           {
             attachmentCount: attachmentPaths.length,
             voiceCount: voiceParts.length,
+            documentCount: documentParts.length,
             transcribedMs,
             skippedCount: skipped.length,
           },

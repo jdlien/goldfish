@@ -196,8 +196,10 @@ describe('AudioTranscriber.transcribe', () => {
 describe('probeDurationMs', () => {
   it('parses afinfo output', async () => {
     execFileMock.mockImplementation(((_b: unknown, _a: unknown, _o: unknown, cb: Function) => {
+      const child = new FakeChild();
       cb(null, 'estimated duration: 19.082000 sec\n', '');
-      return new FakeChild() as never;
+      setImmediate(() => child.emit('close', 0, undefined));
+      return child as never;
     }) as never);
 
     expect(await probeDurationMs(audioPath)).toBe(19082);
@@ -205,8 +207,10 @@ describe('probeDurationMs', () => {
 
   it('returns undefined when afinfo fails, so the caller fails closed', async () => {
     execFileMock.mockImplementation(((_b: unknown, _a: unknown, _o: unknown, cb: Function) => {
+      const child = new FakeChild();
       cb(new Error('boom'), '', '');
-      return new FakeChild() as never;
+      setImmediate(() => child.emit('close', 1, undefined));
+      return child as never;
     }) as never);
 
     expect(await probeDurationMs(audioPath)).toBeUndefined();

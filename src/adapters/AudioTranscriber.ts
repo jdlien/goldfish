@@ -1,4 +1,4 @@
-import { execFile } from 'child_process';
+import { runWithDeadline } from '../lib/runProcess.js';
 import { readFile, stat } from 'fs/promises';
 import {
   type Result,
@@ -18,9 +18,6 @@ const logger = createChildLogger('AudioTranscriber');
 
 /** Duration probe binary. On the daemon's PATH, unlike `mw`. ~24ms per call. */
 const AFINFO_BIN = '/usr/bin/afinfo';
-
-/** Grace period after the deadline before we stop waiting on the child at all. */
-const HARD_KILL_GRACE_MS = 5_000;
 
 /** Marks a failure as "the transcriber wedged", not "this file was bad". */
 export const DEADLINE_ERROR_PREFIX = '[deadline]';
@@ -163,92 +160,6 @@ export function deadlineFor(durationMs?: number): number {
   return Math.max(base, Math.ceil(30_000 + durationMs / 4));
 }
 
-interface RunOutcome {
-  code: number | null;
-  timedOut: boolean;
-  error?: unknown;
-}
-
-/**
- * Run a child process that is guaranteed to settle.
- *
- * `execFile`'s own `timeout` is not a deadline — it is a signal. If the child
- * is blocked in an uninterruptible wait (mw sitting on a MacWhisper modal: an
- * update prompt, a licence nag, a model download) it will not die, no 'close'
- * event fires, and a promisified execFile never settles at all.
- *
- * That matters more than it sounds: the caller runs inside the per-session
- * lock, whose `.finally()` release is downstream of this await. A promise that
- * never settles leaves the lock held forever, so every later message in that
- * thread posts "Queued..." and hangs, with no error anyone can see and no
- * recovery short of restarting the daemon.
- *
- * So: SIGKILL rather than SIGTERM, plus an independent timer that resolves on
- * its own even if the child outlives everything.
- */
-function runWithDeadline(
-  bin: string,
-  args: string[],
-  deadlineMs: number,
-): Promise<RunOutcome> {
-  return new Promise((resolve) => {
-    let settled = false;
-    let hardTimer: NodeJS.Timeout | undefined;
-    const startedAt = Date.now();
-
-    const finish = (outcome: RunOutcome) => {
-      if (settled) return;
-      settled = true;
-      if (hardTimer) clearTimeout(hardTimer);
-      resolve(outcome);
-    };
-
-    let child;
-    try {
-      child = execFile(
-        bin,
-        args,
-        { timeout: deadlineMs, killSignal: 'SIGKILL' },
-        () => {
-          // Deliberately empty: stdout/stderr are unused (see class docstring),
-          // and outcome is taken from the 'close'/'error' events below.
-        },
-      );
-    } catch (error) {
-      // execFile validates its arguments and can throw BEFORE spawning —
-      // a bad timeout, a misconfigured GOLDFISH_MW_PATH. Inside a promise
-      // executor that becomes a rejection, which would break this module's
-      // "never throws" contract and drop the caller's entire message.
-      finish({ code: null, timedOut: false, error });
-      return;
-    }
-
-    hardTimer = setTimeout(() => {
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        // Already gone, or unkillable. Either way we stop waiting.
-      }
-      finish({ code: null, timedOut: true });
-    }, deadlineMs + HARD_KILL_GRACE_MS);
-
-    child.on('error', (error) => finish({ code: null, timedOut: false, error }));
-    child.on('close', (code, signal) =>
-      finish({
-        code,
-        // Judge by the clock, not the signal. A SIGKILL can also come from
-        // maxBuffer overflow, an invalidated code signature after a MacWhisper
-        // update, or someone's `kill -9` — logging those as "exceeded deadline"
-        // sends the next reader down the wrong path.
-        timedOut:
-          code === null &&
-          signal === 'SIGKILL' &&
-          Date.now() - startedAt >= deadlineMs,
-      }),
-    );
-  });
-}
-
 /**
  * Best-effort audio duration, for when Slack omits `duration_ms`.
  *
@@ -266,17 +177,10 @@ export async function probeDurationMs(
     return undefined;
   }
 
-  const run = await new Promise<string | undefined>((resolve) => {
-    execFile(
-      AFINFO_BIN,
-      [audioPath],
-      { timeout: 10_000, killSignal: 'SIGKILL' },
-      (error, stdout) => resolve(error ? undefined : stdout),
-    );
-  });
+  const run = await runWithDeadline(AFINFO_BIN, [audioPath], 10_000);
+  if (run.code !== 0) return undefined;
 
-  if (!run) return undefined;
-  const match = run.match(/estimated duration:\s*([0-9.]+)\s*sec/i);
+  const match = run.stdout.match(/estimated duration:\s*([0-9.]+)\s*sec/i);
   if (!match) return undefined;
   const seconds = Number(match[1]);
   return Number.isFinite(seconds) && seconds > 0
