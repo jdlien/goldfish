@@ -17,20 +17,6 @@ export const WORKSPACE_PATH =
 export const SESSIONS_PATH =
   process.env.GOLDFISH_SESSIONS_PATH ?? join(WORKSPACE_PATH, 'memory', 'sessions');
 
-/** Where downloaded Slack file attachments are stored */
-export const ATTACHMENTS_PATH =
-  process.env.GOLDFISH_ATTACHMENTS_PATH ?? join(WORKSPACE_PATH, 'memory', 'attachments');
-
-/** Maximum file size for Slack attachment downloads (bytes, default 20 MB) */
-export const MAX_FILE_SIZE_BYTES = Number(
-  process.env.GOLDFISH_MAX_FILE_BYTES ?? 20 * 1024 * 1024,
-);
-
-/** Max attachments processed per message */
-export const MAX_ATTACHMENTS_PER_MESSAGE = Number(
-  process.env.GOLDFISH_MAX_ATTACHMENTS ?? 10,
-);
-
 /**
  * Read a numeric env var, falling back when unset *or empty*.
  *
@@ -45,6 +31,31 @@ function numEnv(raw: string | undefined, fallback: number): number {
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
+
+/** Where downloaded Slack file attachments are stored */
+export const ATTACHMENTS_PATH =
+  process.env.GOLDFISH_ATTACHMENTS_PATH ?? join(WORKSPACE_PATH, 'memory', 'attachments');
+
+/**
+ * Maximum file size for Slack attachment downloads (bytes, default 50 MB).
+ *
+ * Raised from 20 MB on 2026-09-17: Don sent a 33 MB scanned lease PDF and it
+ * was refused before download. His scans are image-only with no text layer, so
+ * they are large by nature and more of them will arrive. Slack's own upload
+ * ceiling is far higher, so this number is entirely our choice — and the file
+ * is buffered in memory once, which 50 MB is nothing for.
+ */
+export const MAX_FILE_SIZE_BYTES = numEnv(
+  process.env.GOLDFISH_MAX_FILE_BYTES,
+  50 * 1024 * 1024,
+);
+
+/** Max attachments processed per message */
+export const MAX_ATTACHMENTS_PER_MESSAGE = numEnv(
+  process.env.GOLDFISH_MAX_ATTACHMENTS,
+  10,
+);
+
 
 /**
  * MacWhisper CLI, used to transcribe Slack voice messages.
