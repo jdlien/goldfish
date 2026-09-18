@@ -5,6 +5,7 @@ import { SqliteRepo } from '../adapters/SqliteRepo.js';
 import { writeTranscript } from '../adapters/TranscriptWriter.js';
 import { initDb, closeDb } from '../db/index.js';
 import { createChildLogger } from '../lib/logger.js';
+import { isHumanMessage } from '../lib/messageFilter.js';
 import { formatForSlack, splitSlackMessage } from '../lib/slackFormatter.js';
 import { SlackStreamUpdater } from '../lib/SlackStreamUpdater.js';
 import { SlackNativeStreamer } from '../lib/SlackNativeStreamer.js';
@@ -196,8 +197,10 @@ export async function start(): Promise<void> {
     const hasFiles = Array.isArray(msg.files) && msg.files.length > 0;
     // Need either text or file attachments
     if (!msg.text && !hasFiles) return;
-    // Drop unknown subtypes, but not file_share (that's how Slack delivers attachments)
-    if (msg.subtype && msg.subtype !== 'file_share') return;
+    // Keep only what a human actually typed. See messageFilter.ts — a subtype
+    // missing from that allowlist vanishes with no error anywhere, which is how
+    // "also send to channel" replies were silently lost.
+    if (!isHumanMessage(msg.subtype)) return;
     if (msg.user === undefined || msg.user === '') return;
 
     // Don't respond to our own messages (prevents loops in channels)
