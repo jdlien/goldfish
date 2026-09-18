@@ -27,6 +27,10 @@ export interface SlackFile {
   size?: number;
   url_private?: string;
   url_private_download?: string;
+  /** `slack_audio` marks a voice message (as opposed to an uploaded recording). */
+  subtype?: string;
+  /** Present on voice messages. NOT guaranteed on ordinary audio uploads. */
+  duration_ms?: number;
 }
 
 export interface DownloadedFile {
@@ -34,6 +38,10 @@ export interface DownloadedFile {
   mimetype: string;
   size: number;
   originalName: string;
+  /** True for Slack voice messages — content, not an attachment. */
+  isVoiceMessage: boolean;
+  /** Slack-reported duration, when it gave us one. */
+  durationMs?: number;
 }
 
 /**
@@ -77,6 +85,24 @@ const SUPPORTED_FILETYPES = new Set([
 
 const HEIC_MIMETYPES = new Set(['image/heic', 'image/heif']);
 const HEIC_EXTENSIONS = new Set(['.heic', '.heif']);
+
+/** Slack's `subtype` for a voice message recorded in the client. */
+const SLACK_AUDIO_SUBTYPE = 'slack_audio';
+
+/**
+ * Pause before re-fetching audio that failed on the first try.
+ *
+ * `url_private_download` for a voice note points at a server-side transcode
+ * (`files-tmb`, and named `.mp4` even though Slack presents the file as
+ * `.m4a`). The daemon fetches within about a second of the message event, and
+ * whether that transcode is ready that early is unverified — so one cheap
+ * retry, rather than losing the only copy of what someone said.
+ */
+const AUDIO_RETRY_DELAY_MS = 1_500;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 /**
  * Downloads files from Slack using bot token auth on url_private.
@@ -129,54 +155,62 @@ export class SlackFileDownloader {
       );
     }
 
-    // Download
-    let buffer: Buffer;
-    try {
-      const response = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${this.botToken}`,
-        },
-      });
-
-      if (response.status === 401 || response.status === 403) {
-        return err(
-          createError(
-            ErrorCodes.SLACK_FILE_SCOPE_MISSING,
-            `Slack rejected file download (${response.status}) — bot likely missing files:read scope`,
-          ),
-        );
+    // Non-audio keeps the original single-shot behaviour. Audio gets one retry
+    // and then a fallback to url_private — see AUDIO_RETRY_DELAY_MS.
+    const attempts: Array<{ url: string; delayMs: number }> = [
+      { url, delayMs: 0 },
+    ];
+    if (this.isAudio(file)) {
+      attempts.push({ url, delayMs: AUDIO_RETRY_DELAY_MS });
+      if (file.url_private && file.url_private !== url) {
+        attempts.push({ url: file.url_private, delayMs: 0 });
       }
+    }
 
-      if (!response.ok) {
-        return err(
-          createError(
-            ErrorCodes.SLACK_FILE_DOWNLOAD_FAILED,
-            `Download failed: HTTP ${response.status}`,
-          ),
-        );
+    let buffer: Buffer | undefined;
+    let lastError: ReturnType<typeof createError> | undefined;
+
+    for (const attempt of attempts) {
+      if (attempt.delayMs) await sleep(attempt.delayMs);
+      const result = await this.fetchBytes(attempt.url, file);
+      if (result.ok) {
+        buffer = result.value;
+        break;
       }
+      lastError = result.error;
 
-      const arrayBuf = await response.arrayBuffer();
-      buffer = Buffer.from(arrayBuf);
-
-      // Second size check in case Slack didn't report size upfront
-      if (buffer.byteLength > MAX_FILE_SIZE_BYTES) {
-        return err(
-          createError(
-            ErrorCodes.SLACK_FILE_TOO_LARGE,
-            `Downloaded file is ${buffer.byteLength} bytes (limit ${MAX_FILE_SIZE_BYTES})`,
-          ),
-        );
+      // Only transient failures deserve another go. A file we already know is
+      // oversized won't shrink, and a 401/403 won't grant itself a scope — and
+      // retrying the latter both burns 1.5s inside the session lock and risks
+      // overwriting the scope-missing error with a vaguer one from a later
+      // attempt, which is the single error the owner needs to see to fix it.
+      if (
+        result.error.code === ErrorCodes.SLACK_FILE_TOO_LARGE ||
+        result.error.code === ErrorCodes.SLACK_FILE_SCOPE_MISSING
+      ) {
+        break;
       }
-    } catch (error) {
-      logger.error({ error, fileId: file.id }, 'File download failed');
+    }
+
+    if (!buffer) {
       return err(
-        createError(ErrorCodes.SLACK_FILE_DOWNLOAD_FAILED, 'Download failed', error),
+        lastError ??
+          createError(ErrorCodes.SLACK_FILE_DOWNLOAD_FAILED, 'Download failed'),
       );
     }
 
     // Write to disk
-    const safeName = sanitizeFilename(file.name ?? `${file.id}.bin`);
+    //
+    // Audio gets a neutral, generated name instead of the sender's. Two
+    // reasons: `sanitizeFilename` strips separators and control chars but
+    // leaves quotes, `$`, backticks and semicolons intact, and the path is
+    // then handed to a GUI app whose string handling we don't control; and it
+    // truncates at 200 UTF-16 units rather than bytes, so a 200-character CJK
+    // name is 600 bytes against a 255-byte NAME_MAX — and the `.txt` transcript
+    // sidecar adds four more. Non-audio naming is deliberately untouched.
+    const safeName = this.isAudio(file)
+      ? `${file.id}.${safeAudioExtension(file)}`
+      : sanitizeFilename(file.name ?? `${file.id}.bin`);
     const dateDir = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
     const dir = join(ATTACHMENTS_PATH, dateDir);
     const filename = `${Date.now()}-${safeName}`;
@@ -213,6 +247,7 @@ export class SlackFileDownloader {
         mimetype: 'image/jpeg',
         size: buffer.byteLength,
         originalName: file.name ?? safeName,
+        isVoiceMessage: false,
       });
     }
 
@@ -226,11 +261,94 @@ export class SlackFileDownloader {
       mimetype: file.mimetype ?? 'application/octet-stream',
       size: buffer.byteLength,
       originalName: file.name ?? safeName,
+      isVoiceMessage: this.isVoiceMessage(file),
+      durationMs: file.duration_ms,
     });
+  }
+
+  /**
+   * One authenticated GET. Error mapping is unchanged from the original
+   * single-shot implementation; it was extracted so audio can retry.
+   */
+  private async fetchBytes(
+    url: string,
+    file: SlackFile,
+  ): Promise<Result<Buffer>> {
+    try {
+      const response = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${this.botToken}`,
+        },
+      });
+
+      if (response.status === 401 || response.status === 403) {
+        return err(
+          createError(
+            ErrorCodes.SLACK_FILE_SCOPE_MISSING,
+            `Slack rejected file download (${response.status}) — bot likely missing files:read scope`,
+          ),
+        );
+      }
+
+      if (!response.ok) {
+        return err(
+          createError(
+            ErrorCodes.SLACK_FILE_DOWNLOAD_FAILED,
+            `Download failed: HTTP ${response.status}`,
+          ),
+        );
+      }
+
+      const arrayBuf = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuf);
+
+      // Second size check in case Slack didn't report size upfront.
+      //
+      // Note for audio: Slack's reported `size` is the ORIGINAL upload, while
+      // `url_private_download` serves a smaller transcode (309514 vs 171187
+      // bytes on a measured voice note). The pre-download check is therefore
+      // conservative — it is not measuring the bytes you receive.
+      if (buffer.byteLength > MAX_FILE_SIZE_BYTES) {
+        return err(
+          createError(
+            ErrorCodes.SLACK_FILE_TOO_LARGE,
+            `Downloaded file is ${buffer.byteLength} bytes (limit ${MAX_FILE_SIZE_BYTES})`,
+          ),
+        );
+      }
+
+      return ok(buffer);
+    } catch (error) {
+      logger.error({ error, fileId: file.id }, 'File download failed');
+      return err(
+        createError(ErrorCodes.SLACK_FILE_DOWNLOAD_FAILED, 'Download failed', error),
+      );
+    }
+  }
+
+  /**
+   * A Slack voice message. Checked on `subtype` rather than mimetype, because
+   * the subtype is the thing Slack actually promises: a client shipping a voice
+   * note as `video/mp4` (plausible, given the transcode is named `.mp4`) must
+   * not be rejected by the allowlist before this is ever consulted.
+   */
+  isVoiceMessage(file: SlackFile): boolean {
+    return (file.subtype ?? '').toLowerCase() === SLACK_AUDIO_SUBTYPE;
+  }
+
+  /** Voice message, or any ordinary audio upload. */
+  isAudio(file: SlackFile): boolean {
+    return (
+      this.isVoiceMessage(file) ||
+      (file.mimetype ?? '').toLowerCase().startsWith('audio/')
+    );
   }
 
   private isSupported(file: SlackFile): boolean {
     const mimetype = (file.mimetype ?? '').toLowerCase();
+
+    // Audio is transcribed on ingest rather than read directly.
+    if (this.isAudio(file)) return true;
 
     // HEIC handled via conversion
     if (HEIC_MIMETYPES.has(mimetype)) return true;
@@ -263,6 +381,24 @@ export function sanitizeFilename(name: string): string {
   const normalized = stripped.replace(/\s+/g, '_').slice(0, 200);
   // If empty after sanitization, use a fallback
   return normalized || 'file';
+}
+
+/**
+ * Extension for a generated audio filename.
+ *
+ * Validated, not sanitized: only a short alphanumeric token is accepted, so
+ * nothing a sender controls can introduce a quote, space or separator. Falls
+ * back through the mimetype subtype to a neutral literal.
+ */
+export function safeAudioExtension(file: SlackFile): string {
+  const filetype = (file.filetype ?? '').toLowerCase();
+  if (/^[a-z0-9]{1,8}$/.test(filetype)) return filetype;
+
+  const subtype = (file.mimetype ?? '').toLowerCase().split('/')[1] ?? '';
+  const cleaned = subtype.replace(/[^a-z0-9]/g, '');
+  if (cleaned.length >= 1 && cleaned.length <= 8) return cleaned;
+
+  return 'audio';
 }
 
 /**

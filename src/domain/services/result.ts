@@ -46,4 +46,15 @@ export const ErrorCodes = {
   SLACK_FILE_UNSUPPORTED_TYPE: 'SLACK_FILE_UNSUPPORTED_TYPE',
   SLACK_FILE_SCOPE_MISSING: 'SLACK_FILE_SCOPE_MISSING',
   HEIC_CONVERSION_FAILED: 'HEIC_CONVERSION_FAILED',
+  /**
+   * Audio transcription failed — the machine broke (mw missing, non-zero exit,
+   * deadline, unreadable output). Distinct from AUDIO_NO_SPEECH.
+   *
+   * NOT to be confused with TRANSCRIPT_WRITE_FAILED above, which is about the
+   * *session* transcript (the Claude conversation log in TranscriptWriter.ts).
+   * Same English word, unrelated concept.
+   */
+  AUDIO_TRANSCRIPTION_FAILED: 'AUDIO_TRANSCRIPTION_FAILED',
+  /** Transcription succeeded but the recording contained no speech. */
+  AUDIO_NO_SPEECH: 'AUDIO_NO_SPEECH',
 } as const;

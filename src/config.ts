@@ -31,6 +31,65 @@ export const MAX_ATTACHMENTS_PER_MESSAGE = Number(
   process.env.GOLDFISH_MAX_ATTACHMENTS ?? 10,
 );
 
+/**
+ * Read a numeric env var, falling back when unset *or empty*.
+ *
+ * `Number('')` is 0, not NaN — so an env var set to the empty string would
+ * silently make every duration cap below read as "zero milliseconds allowed",
+ * i.e. every voice note rejected as too long. These are the knobs most likely
+ * to be hand-edited, so they don't get the bare `Number(x ?? y)` pattern used
+ * elsewhere in this file.
+ */
+function numEnv(raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/**
+ * MacWhisper CLI, used to transcribe Slack voice messages.
+ *
+ * MUST be absolute. The daemon is a LaunchAgent whose PATH is
+ * `/usr/bin:/bin:/usr/sbin:/sbin` — `/usr/local/bin` is not on it, and a bare
+ * `mw` fails with ENOENT. (`/usr/bin/afinfo` below *is* on that PATH.)
+ */
+export const MW_BIN_PATH = process.env.GOLDFISH_MW_PATH ?? '/usr/local/bin/mw';
+
+/**
+ * Transcription model, pinned.
+ *
+ * `mw` defaults every one of its flags to whatever MacWhisper's GUI currently
+ * has selected. Left unpinned, opening the app to run a podcast on large-v3
+ * with diarization would silently repoint every voice note at a 5-10x slower
+ * model and start returning `Speaker 1:`-prefixed transcripts, with nothing in
+ * the daemon changed and nothing in the logs to explain it.
+ *
+ * IDs come from `mw models list`.
+ */
+export const MW_MODEL =
+  process.env.GOLDFISH_MW_MODEL ?? 'parakeet-pro:nvidia_parakeet-v3_494MB';
+
+/** Source language. 'auto' misdetects on short clips, so default to explicit. */
+export const TRANSCRIBE_LANGUAGE = process.env.GOLDFISH_TRANSCRIBE_LANG ?? 'en';
+
+/** Longest single audio file we'll transcribe (ms). */
+export const MAX_TRANSCRIBE_DURATION_MS = numEnv(
+  process.env.GOLDFISH_MAX_TRANSCRIBE_MS,
+  10 * 60 * 1000,
+);
+
+/**
+ * Longest *total* audio per message (ms).
+ *
+ * Not optional. Transcription is synchronous inside the per-session lock, and
+ * MAX_ATTACHMENTS_PER_MESSAGE is 10 — so a per-file cap alone would permit
+ * ~100 minutes of audio in one message, from any full workspace member.
+ */
+export const MAX_TRANSCRIBE_TOTAL_DURATION_MS = numEnv(
+  process.env.GOLDFISH_MAX_TRANSCRIBE_TOTAL_MS,
+  15 * 60 * 1000,
+);
+
 /** Memory search database */
 export const SEARCH_DB_PATH =
   process.env.GOLDFISH_SEARCH_DB ?? join(WORKSPACE_PATH, 'memory', 'search.sqlite');

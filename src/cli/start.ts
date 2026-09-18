@@ -15,6 +15,16 @@ import {
 import { writeNativeStreamFailureRecord } from '../lib/nativeStreamDiagnostics.js';
 import { extractToolSources } from '../lib/toolSources.js';
 import { SlackFileDownloader, type SlackFile } from '../adapters/SlackFileDownloader.js';
+import {
+  AudioTranscriber,
+  probeDurationMs,
+  DEADLINE_ERROR_PREFIX,
+} from '../adapters/AudioTranscriber.js';
+import {
+  composeUserMessage,
+  hasProcessedContent,
+  type VoiceMessagePart,
+} from '../lib/composeUserMessage.js';
 import { ErrorCodes } from '../domain/services/result.js';
 import {
   SESSION_EXPIRY_MS,
@@ -27,6 +37,8 @@ import {
   modelForChannel,
   briefForChannel,
   OWNER_USER_ID,
+  MAX_TRANSCRIBE_DURATION_MS,
+  MAX_TRANSCRIBE_TOTAL_DURATION_MS,
 } from '../config.js';
 
 interface SlackDmMessage {
@@ -147,6 +159,7 @@ export async function start(): Promise<void> {
   // Create file downloader (for Slack image/attachment handling)
   const slackBotToken = process.env.SLACK_BOT_TOKEN ?? '';
   const fileDownloader = new SlackFileDownloader(slackBotToken);
+  const audioTranscriber = new AudioTranscriber();
 
   // Verify Claude is available
   const claudeCheck = await claudeRunner.checkAvailable();
@@ -293,6 +306,11 @@ export async function start(): Promise<void> {
         resumeSessionId = null;
       }
 
+      // Computed before the attachment block, not after: the scope-missing
+      // reply below contains developer instructions that must never be shown
+      // to anyone but the owner.
+      const senderIsOwner = OWNER_USER_ID ? msg.user === OWNER_USER_ID : true;
+
       // Download any file attachments (images, PDFs, text, code, etc.)
       // and fold them into the prompt as [Attached file: <path>] markers.
       // The agent's personality (from workspace CLAUDE.md / IDENTITY.md)
@@ -300,14 +318,24 @@ export async function start(): Promise<void> {
       if (hasFiles) {
         const filesToProcess = msg.files!.slice(0, MAX_ATTACHMENTS_PER_MESSAGE);
         const attachmentPaths: string[] = [];
+        const voiceParts: VoiceMessagePart[] = [];
         const skipped: string[] = [];
         let scopeMissing = false;
+        // Transcription is synchronous and runs inside the per-session lock, so
+        // the budget is per MESSAGE, not per file: MAX_ATTACHMENTS_PER_MESSAGE
+        // is 10, and a per-file cap alone would let one message tie the thread
+        // up for an hour and a half.
+        let transcribedMs = 0;
+        // Circuit breaker. Killing mw does not cancel the job inside
+        // MacWhisper.app, so once one file has hit the deadline every later
+        // one queues behind that orphan and waits its own full deadline. Ten
+        // 89-second notes would sit inside the lock for ~11 minutes.
+        let transcriberWedged = false;
 
         for (const file of filesToProcess) {
           const downloadResult = await fileDownloader.download(file);
-          if (downloadResult.ok) {
-            attachmentPaths.push(downloadResult.value.path);
-          } else {
+
+          if (!downloadResult.ok) {
             const errorCode = downloadResult.error.code;
             const displayName = file.name ?? 'file';
             if (errorCode === ErrorCodes.SLACK_FILE_SCOPE_MISSING) {
@@ -326,32 +354,101 @@ export async function start(): Promise<void> {
               { error: downloadResult.error, fileId: file.id },
               'Failed to download Slack file',
             );
+            continue;
           }
+
+          const downloaded = downloadResult.value;
+          const isAudio =
+            downloaded.isVoiceMessage ||
+            downloaded.mimetype.toLowerCase().startsWith('audio/');
+
+          if (!isAudio) {
+            attachmentPaths.push(downloaded.path);
+            continue;
+          }
+
+          // An unknown duration must not mean "unlimited" — that is how an
+          // hour-long recording reaches a transcriber holding the session lock.
+          // Slack gives duration_ms for voice notes but not necessarily for an
+          // ordinary upload, so probe, then fail closed.
+          const durationMs =
+            downloaded.durationMs ?? (await probeDurationMs(downloaded.path));
+
+          const part: VoiceMessagePart = {
+            kind: downloaded.isVoiceMessage ? 'voice' : 'recording',
+            state: 'transcribed',
+            audioPath: downloaded.path,
+            durationMs,
+          };
+
+          if (durationMs === undefined) {
+            part.state = 'unknown_duration';
+          } else if (
+            durationMs > MAX_TRANSCRIBE_DURATION_MS ||
+            transcribedMs + durationMs > MAX_TRANSCRIBE_TOTAL_DURATION_MS
+          ) {
+            part.state = 'too_long';
+          } else if (transcriberWedged) {
+            part.state = 'failed';
+          } else {
+            transcribedMs += durationMs;
+            const transcription = await audioTranscriber.transcribe(
+              downloaded.path,
+              durationMs,
+            );
+            if (transcription.ok) {
+              part.transcript = transcription.value;
+              part.transcriptPath = `${downloaded.path}.txt`;
+            } else {
+              part.state =
+                transcription.error.code === ErrorCodes.AUDIO_NO_SPEECH
+                  ? 'no_speech'
+                  : 'failed';
+              if (transcription.error.message.startsWith(DEADLINE_ERROR_PREFIX)) {
+                transcriberWedged = true;
+              }
+              logger.warn(
+                { error: transcription.error, fileId: file.id },
+                'Audio transcription unsuccessful',
+              );
+            }
+          }
+
+          // Either way the audio path lives only in the marker, never in
+          // attachmentPaths — the agent treats those as Read targets and
+          // cannot open an .m4a. For an uploaded recording the transcript
+          // travels as the attachment instead of being inlined: it is not
+          // something the sender said into Slack, and a nine-minute meeting
+          // would put ~1500 words in the prompt twice over.
+          if (part.kind === 'recording' && part.transcriptPath) {
+            attachmentPaths.push(part.transcriptPath);
+          }
+          voiceParts.push(part);
         }
 
-        // Scope missing is a special case — tell the user how to fix it
-        if (scopeMissing && attachmentPaths.length === 0) {
+        // Compose BEFORE any guard runs. Appending voice content afterwards is
+        // how a voice-only message gets silently discarded by the "nothing to
+        // send" check below.
+        userMessage = composeUserMessage({
+          text: userMessage,
+          attachmentPaths,
+          voiceParts,
+          skipped,
+        });
+
+        // Scope missing is a special case — tell the OWNER how to fix it.
+        // Anyone else gets a plain apology: the fix is developer instructions
+        // ("add the files:read scope, reinstall the app"), and delivering those
+        // to, say, a parent in a shared channel is noise they can't act on.
+        if (scopeMissing && !hasProcessedContent({ attachmentPaths, voiceParts })) {
           await say({
-            text:
-              '📎 I can see your attachment, but my Slack app is missing the `files:read` scope. ' +
-              'Add it in the Goldfish app\'s OAuth settings and reinstall to enable attachment support.',
+            text: senderIsOwner
+              ? '📎 I can see your attachment, but my Slack app is missing the `files:read` scope. ' +
+                'Add it in the Goldfish app\'s OAuth settings and reinstall to enable attachment support.'
+              : '📎 I can see you sent something, but I wasn\'t able to open it — sorry.',
             thread_ts: replyThreadTs,
           });
           return;
-        }
-
-        // Append [Attached file: ...] marker(s) to the message
-        if (attachmentPaths.length > 0) {
-          const label = attachmentPaths.length === 1 ? 'Attached file' : 'Attached files';
-          const paths = attachmentPaths.join(', ');
-          userMessage = userMessage
-            ? `${userMessage}\n\n[${label}: ${paths}]`
-            : `[${label}: ${paths}]`;
-        }
-
-        // Note any files that couldn't be processed
-        if (skipped.length > 0) {
-          userMessage += `\n\n[Could not process: ${skipped.join(', ')}]`;
         }
 
         // If everything failed and there's no text, don't invoke Claude
@@ -366,6 +463,8 @@ export async function start(): Promise<void> {
         logger.info(
           {
             attachmentCount: attachmentPaths.length,
+            voiceCount: voiceParts.length,
+            transcribedMs,
             skippedCount: skipped.length,
           },
           'Processed message attachments',
@@ -377,7 +476,6 @@ export async function start(): Promise<void> {
       // with more than one human the agent cannot tell who it is talking to and
       // will assume it is the owner. Prepend the facts it cannot otherwise know.
       // Added after a session answered JD's dad with JD's private status board.
-      const senderIsOwner = OWNER_USER_ID ? msg.user === OWNER_USER_ID : true;
       if (isListenChannel || !senderIsOwner) {
         const senderId = msg.user ?? 'unknown';
         const senderName = await slackClient!.getUserDisplayName(senderId);
