@@ -51,6 +51,27 @@ Claude Code has full bash, file, and web access. List any custom tools or script
 `;
 }
 
+export function buildAgentsMd(name: string, personality: string): string {
+  return codexifyClaudeInstructions(buildClaudeMd(name, personality)).replace(
+    'Claude Code has full bash, file, and web access.',
+    'Codex has bash, file, and optional web access according to the configured sandbox and network policy.',
+  );
+}
+
+/** Convert Claude's line-oriented @file imports into explicit Codex reads. */
+export function codexifyClaudeInstructions(content: string): string {
+  return content
+    .replace(
+      /^(\s*(?:[-*]|\d+\.)\s+)@([^\s]+)(.*)$/gm,
+      (_line, prefix: string, target: string, suffix: string) =>
+        `${prefix}Read \`${target}\`${suffix}`,
+    )
+    .replace(
+      /^@(\S+)(.*)$/gm,
+      (_line, target: string, suffix: string) => `Read \`${target}\`${suffix}`,
+    );
+}
+
 export function buildFocusMd(): string {
   return `# Current Focus
 
@@ -162,6 +183,26 @@ export async function init(options: InitOptions): Promise<void> {
       console.log(chalk.green(`  Created CLAUDE.md — ${name}'s identity`));
     }
 
+    // Codex discovers AGENTS.md. Keep existing instructions untouched; for a
+    // new or Claude-only workspace, create an equivalent starting point.
+    if (existsSync(agentsPath)) {
+      console.log(chalk.yellow(`  Skipped AGENTS.md (already exists)`));
+      console.log(chalk.dim(`  Review it for Codex-compatible tools and identity-file reads.`));
+    } else if (existsSync(claudePath)) {
+      const source = codexifyClaudeInstructions(readFileSync(claudePath, 'utf-8')).replace(
+        'Claude Code has full bash, file, and web access.',
+        'Codex has bash, file, and optional web access according to the configured sandbox and network policy.',
+      );
+      writeFileSync(
+        agentsPath,
+        '<!-- Created from CLAUDE.md by goldfish init. Keep both files aligned when changing shared identity instructions. -->\n\n' + source,
+      );
+      console.log(chalk.green(`  Created AGENTS.md — Codex identity`));
+    } else {
+      writeFileSync(agentsPath, buildAgentsMd(name, personality));
+      console.log(chalk.green(`  Created AGENTS.md — ${name}'s Codex identity`));
+    }
+
     // Write FOCUS.md (only if it doesn't exist)
     const focusPath = join(workspacePath, 'FOCUS.md');
     if (existsSync(focusPath)) {
@@ -207,7 +248,7 @@ export async function init(options: InitOptions): Promise<void> {
     if (migrateFromAgents) {
       console.log(`  2. Review ${chalk.bold('CLAUDE.md')} — remove OpenClaw-specific instructions`);
     } else {
-      console.log(`  2. Edit ${chalk.bold('CLAUDE.md')} to customize ${name}'s personality`);
+      console.log(`  2. Edit ${chalk.bold('CLAUDE.md')} and ${chalk.bold('AGENTS.md')} to customize ${name}'s personality`);
     }
     console.log(`  3. Edit ${chalk.bold(join(workspacePath, 'schedule.yaml'))} with your Slack channel IDs`);
     console.log(`  4. Run ${chalk.bold('pnpm cli start')} and say hello\n`);

@@ -305,6 +305,8 @@ export async function runDueScheduleTasks(
           channel: task.channel!,
           context: task.context,
           model: task.model,
+          backend: task.backend,
+          effort: task.effort,
         });
       } else {
         await runMaintenanceTask(task);

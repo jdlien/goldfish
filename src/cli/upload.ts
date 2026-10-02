@@ -3,6 +3,7 @@ import * as path from 'path';
 import chalk from 'chalk';
 import { createSlackClientFromEnv } from '../adapters/SlackBoltClient.js';
 import { createChildLogger } from '../lib/logger.js';
+import { resolveDestination, describeDestination } from '../lib/slackDestination.js';
 
 const logger = createChildLogger('cli:upload');
 
@@ -10,6 +11,8 @@ export interface UploadOptions {
   file: string;
   channel?: string;
   thread?: string;
+  /** Post at channel top level, ignoring the thread inherited from the session. */
+  noThread?: boolean;
   title?: string;
   comment?: string;
   dryRun?: boolean;
@@ -19,7 +22,16 @@ export interface UploadOptions {
  * Upload a file to Slack
  */
 export async function upload(options: UploadOptions): Promise<void> {
-  const { file, channel, thread, title, comment, dryRun } = options;
+  const { file, channel, thread, noThread, title, comment, dryRun } = options;
+
+  // Resolve the destination before touching the file, so a contradictory or
+  // unresolvable target fails without a half-done upload.
+  const destResult = resolveDestination({ channel, thread, noThread });
+  if (!destResult.ok) {
+    console.log(chalk.red(`Error: ${destResult.error}`));
+    process.exit(1);
+  }
+  const dest = destResult.value;
 
   // Resolve file path
   const filePath = path.resolve(file);
@@ -40,12 +52,7 @@ export async function upload(options: UploadOptions): Promise<void> {
     console.log(`  File:     ${filePath}`);
     console.log(`  Filename: ${filename}`);
     console.log(`  Size:     ${sizeKB} KB`);
-    if (channel) {
-      console.log(`  Channel:  ${channel}`);
-    }
-    if (thread) {
-      console.log(`  Thread:   ${thread}`);
-    }
+    console.log(`  To:       ${describeDestination(dest)}`);
     if (title) {
       console.log(`  Title:    ${title}`);
     }
@@ -76,13 +83,13 @@ export async function upload(options: UploadOptions): Promise<void> {
   const content = fs.readFileSync(filePath);
 
   // Upload file
-  console.log(chalk.dim('Uploading to Slack...'));
+  console.log(chalk.dim(`Uploading to ${describeDestination(dest)}...`));
 
   const uploadResult = await client.uploadFile({
     content,
     filename,
-    channel,
-    threadTs: thread,
+    channel: dest.channel,
+    threadTs: dest.threadTs,
     title,
     initialComment: comment,
   });
@@ -96,7 +103,7 @@ export async function upload(options: UploadOptions): Promise<void> {
   }
 
   const result = uploadResult.value;
-  console.log(chalk.green(`\n✓ File uploaded successfully`));
+  console.log(chalk.green(`\n✓ File uploaded to ${describeDestination(dest)}`));
   console.log(`  File ID:   ${result.fileId}`);
   if (result.permalink) {
     console.log(`  Permalink: ${result.permalink}`);
@@ -106,8 +113,10 @@ export async function upload(options: UploadOptions): Promise<void> {
     {
       fileId: result.fileId,
       filename,
-      channel,
-      thread,
+      channel: dest.channel,
+      thread: dest.threadTs,
+      channelInherited: dest.channelInherited,
+      threadInherited: dest.threadInherited,
       permalink: result.permalink,
     },
     'File uploaded'

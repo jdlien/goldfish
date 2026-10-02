@@ -19,6 +19,7 @@ import {
   browserGoto,
   browserScrape,
   browserScreenshot,
+  agentRunCommand,
 } from './cli/index.js';
 import { registerSearchCommand } from './cli/search.js';
 import { registerEmbeddingsCommand } from './cli/embeddings.js';
@@ -27,8 +28,24 @@ const program = new Command();
 
 program
   .name('goldfish')
-  .description('AI agent runtime — Claude Code-native Slack bot with persistent memory')
-  .version('0.1.0');
+  .description('AI agent runtime — Claude Code or Codex Slack bot with persistent memory')
+  .version('0.2.0');
+
+program
+  .command('agent-run')
+  .description('Run an isolated provider-neutral agent prompt from stdin')
+  .requiredOption('--backend <backend>', 'claude or codex')
+  .option('--model <model>', 'Provider model')
+  .option('--effort <effort>', 'Reasoning effort')
+  .option('--cwd <path>', 'Working directory')
+  .option('--timeout-ms <ms>', 'Timeout in milliseconds', Number)
+  .option('--max-turns <turns>', 'Provider turn limit when supported', Number)
+  .action(async (options) => {
+    if (options.backend !== 'claude' && options.backend !== 'codex') {
+      throw new Error('--backend must be claude or codex');
+    }
+    await agentRunCommand(options);
+  });
 
 // Auth commands
 const auth = program.command('auth').description('Authentication management');
@@ -57,6 +74,21 @@ program
   .description('Start the Goldfish bot (Socket Mode)')
   .action(start);
 
+/**
+ * Split commander's dual-purpose `thread` option into its two real values.
+ *
+ * `-t, --thread <ts>` and `--no-thread` share one key: a string when a ts was
+ * given, `false` on negation, undefined otherwise. A boolean must never reach
+ * a field typed as a thread timestamp, so narrow by type rather than trusting
+ * commander's default-value rules.
+ */
+function threadFlags(value: unknown): { thread?: string; noThread: boolean } {
+  return {
+    thread: typeof value === 'string' ? value : undefined,
+    noThread: value === false,
+  };
+}
+
 // Send command
 program
   .command('send')
@@ -64,11 +96,12 @@ program
   .requiredOption('-m, --message <text>', 'Message to send')
   .option('-c, --channel <id>', 'Channel ID to send to')
   .option('-t, --thread <ts>', 'Thread timestamp to reply to')
+  .option('--no-thread', 'Post at channel top level, ignoring the session thread')
   .option('--dry-run', 'Show what would be sent without sending')
   .action((options) => {
     send({
       channel: options.channel,
-      thread: options.thread,
+      ...threadFlags(options.thread),
       message: options.message,
       dryRun: options.dryRun,
     });
@@ -81,6 +114,7 @@ program
   .requiredOption('-f, --file <path>', 'Path to file to upload')
   .option('-c, --channel <id>', 'Channel ID to share the file to')
   .option('-t, --thread <ts>', 'Thread timestamp to share the file in')
+  .option('--no-thread', 'Post at channel top level, ignoring the session thread')
   .option('--title <title>', 'Title for the file')
   .option('--comment <text>', 'Initial comment to accompany the file')
   .option('--dry-run', 'Show what would be uploaded without uploading')
@@ -88,7 +122,7 @@ program
     upload({
       file: options.file,
       channel: options.channel,
-      thread: options.thread,
+      ...threadFlags(options.thread),
       title: options.title,
       comment: options.comment,
       dryRun: options.dryRun,
@@ -103,6 +137,9 @@ program
   .option('-c, --channel <id>', 'Channel ID (defaults to GOLDFISH_DM_CHANNEL_ID)')
   .option('--context <text>', 'Additional context/focus for this session')
   .option('--reminder <text>', 'Reminder message (instead of full briefing)')
+  .option('--backend <backend>', 'Agent backend: claude or codex')
+  .option('--model <model>', 'Model override for this check-in')
+  .option('--effort <effort>', 'Reasoning effort override')
   .option('--dry-run', 'Show what would be sent without sending')
   .action((options) => {
     if (!['morning', 'weekly', 'exploration', 'heartbeat'].includes(options.type)) {
@@ -115,6 +152,9 @@ program
       context: options.context,
       reminder: options.reminder,
       dryRun: options.dryRun,
+      backend: options.backend,
+      model: options.model,
+      effort: options.effort,
     });
   });
 

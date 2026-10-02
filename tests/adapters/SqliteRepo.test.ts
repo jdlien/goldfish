@@ -108,6 +108,83 @@ describe('updateClaudeSessionId', () => {
   });
 });
 
+describe('provider-neutral sessions and leases', () => {
+  it('stores a Codex session and clears the Claude compatibility column', async () => {
+    const created = await repo.createSession(makeSessionParams());
+    expect(created.ok).toBe(true);
+    if (!created.ok) throw created.error;
+
+    const updated = await repo.updateAgentSession(
+      created.value.id,
+      'codex',
+      'codex-thread-1',
+      created.value.agentSessionRevision,
+    );
+    expect(updated).toEqual({ ok: true, value: true });
+
+    const found = await repo.findSession('C0TEST12345', '1234567890.123456');
+    expect(found.ok && found.value).toMatchObject({
+      agentBackend: 'codex',
+      agentSessionId: 'codex-thread-1',
+      agentSessionRevision: 1,
+      claudeSessionId: null,
+    });
+  });
+
+  it('rejects a stale session revision', async () => {
+    const created = await repo.createSession(makeSessionParams());
+    expect(created.ok).toBe(true);
+    if (!created.ok) throw created.error;
+    await repo.updateAgentSession(created.value.id, 'claude', 'one', 0);
+    const stale = await repo.updateAgentSession(created.value.id, 'codex', 'two', 0);
+    expect(stale).toEqual({ ok: true, value: false });
+  });
+
+  it('persists an explicit scheduled-task backend pin', async () => {
+    const created = await repo.createSession(makeSessionParams());
+    expect(created.ok).toBe(true);
+    if (!created.ok) throw created.error;
+    await repo.updateAgentSession(
+      created.value.id,
+      'codex',
+      'scheduled-codex-thread',
+      0,
+      true,
+    );
+    const found = await repo.findSession('C0TEST12345', '1234567890.123456');
+    expect(found.ok && found.value).toMatchObject({
+      agentBackend: 'codex',
+      agentBackendPinned: true,
+    });
+  });
+
+  it('replaces the old provider tuple only after a successful new-provider run', async () => {
+    const created = await repo.createSession(makeSessionParams());
+    expect(created.ok).toBe(true);
+    if (!created.ok) throw created.error;
+    await repo.updateAgentSession(created.value.id, 'claude', 'claude-context', 0);
+    const switched = await repo.updateAgentSession(created.value.id, 'codex', 'codex-context', 1);
+    expect(switched).toEqual({ ok: true, value: true });
+    const found = await repo.findSession('C0TEST12345', '1234567890.123456');
+    expect(found.ok && found.value).toMatchObject({
+      agentBackend: 'codex',
+      agentSessionId: 'codex-context',
+      claudeSessionId: null,
+      agentSessionRevision: 2,
+    });
+  });
+
+  it('allows only one live cross-process lease', async () => {
+    const created = await repo.createSession(makeSessionParams());
+    expect(created.ok).toBe(true);
+    if (!created.ok) throw created.error;
+    expect(await repo.acquireRunLease(created.value.id, 'owner-a', 60_000)).toEqual({ ok: true, value: true });
+    expect(await repo.acquireRunLease(created.value.id, 'owner-b', 60_000)).toEqual({ ok: true, value: false });
+    await repo.releaseRunLease(created.value.id, 'owner-a');
+    expect(await repo.acquireRunLease(created.value.id, 'owner-b', 60_000)).toEqual({ ok: true, value: true });
+  });
+});
+
 describe('touchSession', () => {
   it('updates lastActiveAt without changing other fields', async () => {
     const createResult = await repo.createSession(makeSessionParams());

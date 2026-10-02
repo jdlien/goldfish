@@ -20,6 +20,9 @@ tasks:
     type: morning
     at: "8:30am"
     channel: YOUR_CHANNEL_ID    # e.g. C0ABC123DEF
+    # backend: codex            # optional: claude or codex
+    # model: gpt-6-astra        # optional provider model override
+    # effort: medium            # optional reasoning effort override
 
   - name: heartbeat
     type: heartbeat
@@ -48,7 +51,9 @@ tasks:
   - name: daily-synthesis
     type: daily-synthesis
     at: "1:00am"
-    # model: claude-opus-4-7   # optional model override (default: claude-sonnet-4-6)
+    # backend: codex           # otherwise inherits GOLDFISH_BACKEND
+    # model: gpt-6-astra       # optional provider model override
+    # effort: medium
 
   - name: index-memory
     type: index-memory

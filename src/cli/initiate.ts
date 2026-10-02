@@ -6,13 +6,22 @@
 import chalk from 'chalk';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
+import { randomUUID } from 'crypto';
 import { createSlackClientFromEnv } from '../adapters/SlackBoltClient.js';
-import { ClaudeRunner } from '../adapters/ClaudeRunner.js';
+import { AgentRunnerRegistry } from '../adapters/AgentRunnerFactory.js';
+import type { AgentBackend } from '../adapters/AgentRunner.js';
 import { SqliteRepo } from '../adapters/SqliteRepo.js';
+import type { Session } from '../domain/entities/Session.js';
 import { initDb, closeDb } from '../db/index.js';
 import { createChildLogger } from '../lib/logger.js';
 import { formatForSlack, splitSlackMessage } from '../lib/slackFormatter.js';
-import { WORKSPACE_PATH, validateWorkspace } from '../config.js';
+import {
+  WORKSPACE_PATH,
+  runtimeForChannel,
+  validateConfiguration,
+  validateWorkspace,
+  workspaceWarnings,
+} from '../config.js';
 
 const logger = createChildLogger('cli:initiate');
 
@@ -23,6 +32,8 @@ export interface InitiateOptions {
   reminder?: string;
   dryRun?: boolean;
   model?: string;
+  backend?: AgentBackend;
+  effort?: string;
 }
 
 /**
@@ -111,7 +122,7 @@ function getDefaultPrompt(type: string): string {
         '',
         '## What to check',
         '',
-        '1. Check your workspace CLAUDE.md for any configured tools (email, calendar, etc.) and run them',
+        '1. Check your workspace identity instructions (CLAUDE.md or AGENTS.md) for configured tools and run them',
         '2. Read FOCUS.md — are there deadlines approaching or items at risk?',
         `3. Read memory/${today}.md for today's context`,
         '',
@@ -182,7 +193,7 @@ function getDefaultPrompt(type: string): string {
         '',
         '1. Read FOCUS.md for current priorities',
         `2. Read memory/${today}.md (or yesterday) for recent context`,
-        '3. Check your workspace CLAUDE.md for any configured tools (email, calendar, etc.) and run them',
+        '3. Check your workspace identity instructions (CLAUDE.md or AGENTS.md) for configured tools and run them',
         '',
         '## Output Format',
         '',
@@ -224,11 +235,26 @@ export async function initiate(options: InitiateOptions): Promise<void> {
 
   console.log(chalk.bold(`\n🐟 Initiating ${type} check-in...\n`));
 
-  // Validate workspace before doing anything else
-  const workspaceError = validateWorkspace();
+  const configErrors = validateConfiguration();
+  if (configErrors.length > 0) {
+    console.log(chalk.red(`Invalid Goldfish configuration:\n- ${configErrors.join('\n- ')}`));
+    process.exit(1);
+  }
+
+  const runtime = runtimeForChannel(channel, {
+    backend: options.backend,
+    model: options.model,
+    effort: options.effort,
+  });
+
+  // Validate the identity file for the selected backend.
+  const workspaceError = validateWorkspace(runtime.backend);
   if (workspaceError) {
     console.log(chalk.red(workspaceError));
     process.exit(1);
+  }
+  for (const warning of workspaceWarnings(runtime.backend)) {
+    console.log(chalk.yellow(`⚠ ${warning}`));
   }
 
   const db = await initDb();
@@ -249,7 +275,9 @@ export async function initiate(options: InitiateOptions): Promise<void> {
     process.exit(1);
   }
 
-  const claudeRunner = new ClaudeRunner();
+  const runner = new AgentRunnerRegistry().get(runtime.backend);
+  const leaseOwner = randomUUID();
+  let leasedSession: Session | null = null;
 
   try {
     // Send preparing message (skip for heartbeat — it may stay silent)
@@ -261,35 +289,51 @@ export async function initiate(options: InitiateOptions): Promise<void> {
         text: '🐟 Preparing your check-in...',
       });
       messageTs = preparingResult.ok ? preparingResult.value : null;
+      if (messageTs) {
+        const sessionResult = await repo.getOrCreateSession(channel, messageTs);
+        if (sessionResult.ok) {
+          const lease = await repo.acquireRunLease(sessionResult.value.id, leaseOwner, 16 * 60 * 1000);
+          if (lease.ok && lease.value) leasedSession = sessionResult.value;
+          else {
+            await slackClient.updateMessage({
+              channel,
+              ts: messageTs,
+              text: '⏳ Another Goldfish process is already working on this check-in.',
+            });
+            return;
+          }
+        }
+      }
     }
 
-    // Run Claude
-    console.log(chalk.dim('Running Claude...'));
-    const claudeResult = await claudeRunner.run({
+    console.log(chalk.dim(`Running ${runtime.backend}...`));
+    const agentResult = await runner.run({
       prompt,
       maxTurns: MAX_TURNS_BY_TYPE[type] ?? FALLBACK_MAX_TURNS,
-      model: options.model,
+      model: runtime.model,
+      effort: runtime.effort,
+      slackChannelId: channel,
     });
 
-    if (!claudeResult.ok) {
-      logger.error({ error: claudeResult.error }, 'Claude invocation failed');
+    if (!agentResult.ok) {
+      logger.error({ error: agentResult.error, backend: runtime.backend }, 'Agent invocation failed');
       if (messageTs) {
         await slackClient.updateMessage({
           channel,
           ts: messageTs,
-          text: `❌ Error: ${claudeResult.error.message}`,
+          text: `❌ Error: ${agentResult.error.message}`,
         });
       }
       await closeDb();
       process.exit(1);
     }
 
-    const { result, sessionId: claudeSessionId, durationMs } = claudeResult.value;
+    const { result, sessionId: agentSessionId, durationMs } = agentResult.value;
 
     // Heartbeat: if nothing actionable, stay silent
     if (type === 'heartbeat' && result.trim().startsWith('HEARTBEAT_OK')) {
       console.log(chalk.dim('Heartbeat: nothing actionable. Staying silent.'));
-      logger.info({ claudeSessionId, durationMs }, 'Heartbeat OK — no message sent');
+      logger.info({ agentSessionId, backend: runtime.backend, durationMs }, 'Heartbeat OK — no message sent');
       // Clean up the preparing message if we sent one
       if (messageTs) {
         await slackClient.deleteMessage({ channel, ts: messageTs }).catch(() => {});
@@ -327,9 +371,31 @@ export async function initiate(options: InitiateOptions): Promise<void> {
 
     // Create session so thread replies continue this conversation
     if (finalMessageTs) {
-      const sessionResult = await repo.getOrCreateSession(channel, finalMessageTs);
-      if (sessionResult.ok && claudeSessionId) {
-        await repo.updateClaudeSessionId(sessionResult.value.id, claudeSessionId);
+      const sessionResult = leasedSession && finalMessageTs === messageTs
+        ? { ok: true as const, value: leasedSession }
+        : await repo.getOrCreateSession(channel, finalMessageTs);
+      if (sessionResult.ok && agentSessionId) {
+        const saved = await repo.updateAgentSession(
+          sessionResult.value.id,
+          runtime.backend,
+          agentSessionId,
+          sessionResult.value.agentSessionRevision,
+          options.backend === undefined ? undefined : true,
+        );
+        if (!saved.ok || !saved.value) {
+          logger.error(
+            { error: saved.ok ? undefined : saved.error, sessionId: sessionResult.value.id },
+            'Failed to persist proactive session continuity',
+          );
+          const warning = await slackClient.sendMessage({
+            channel,
+            threadTs: finalMessageTs,
+            text: '⚠️ I sent the check-in, but couldn’t save its conversation state. A reply may start with incomplete context.',
+          });
+          if (!warning.ok) {
+            logger.error({ error: warning.error }, 'Failed to send continuity warning');
+          }
+        }
         await repo.saveMessage({
           sessionId: sessionResult.value.id,
           slackTs: finalMessageTs,
@@ -340,12 +406,15 @@ export async function initiate(options: InitiateOptions): Promise<void> {
     }
 
     console.log(chalk.green('\n✓ Check-in sent!\n'));
-    console.log(`  Claude Session: ${claudeSessionId}`);
+    console.log(`  ${runtime.backend} session: ${agentSessionId}`);
     console.log(`  Duration: ${durationMs}ms`);
     console.log(chalk.dim('\nReplies in this thread will continue the session.'));
 
-    logger.info({ claudeSessionId, durationMs }, 'Proactive check-in completed');
+    logger.info({ agentSessionId, backend: runtime.backend, durationMs }, 'Proactive check-in completed');
   } finally {
+    if (leasedSession) {
+      await repo.releaseRunLease(leasedSession.id, leaseOwner);
+    }
     await closeDb();
   }
 }

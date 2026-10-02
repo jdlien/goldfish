@@ -13,7 +13,10 @@ export interface NativeStreamFailureRecord {
   threadTs: string;
   messageTs: string;
   sessionId: string;
-  claudeSessionId: string | null;
+  backend?: 'claude' | 'codex';
+  agentSessionId?: string | null;
+  /** @deprecated Read compatibility for older diagnostic fixtures. */
+  claudeSessionId?: string | null;
   deliveryStatus: NativeStreamDeliveryStatus;
   rawTextLength: number;
   rawTextPreview: string;

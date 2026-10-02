@@ -14,7 +14,20 @@ export type StreamEvent =
       output: string;
       isError: boolean;
     }
-  | { type: 'result'; result: string; sessionId: string; costUsd?: number; numTurns?: number; durationMs?: number }
+  | {
+      type: 'result';
+      result: string;
+      sessionId: string;
+      costUsd?: number;
+      numTurns?: number;
+      durationMs?: number;
+      usage?: {
+        inputTokens?: number;
+        cachedInputTokens?: number;
+        outputTokens?: number;
+        reasoningOutputTokens?: number;
+      };
+    }
   | { type: 'error'; message: string };
 
 /**

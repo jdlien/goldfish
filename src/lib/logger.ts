@@ -21,6 +21,9 @@ const transport = isDev
         colorize: true,
         translateTime: 'SYS:standard',
         ignore: 'pid,hostname',
+        // stdout is a data channel for commands such as `agent-run`, whose
+        // output is captured verbatim by the synthesis pipeline.
+        destination: 2,
       },
     })
   : pino.transport({

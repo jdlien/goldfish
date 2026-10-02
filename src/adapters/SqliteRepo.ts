@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely';
+import { sql, type Kysely, type Selectable } from 'kysely';
 import type { Database } from '../db/types.js';
 import { randomUUID } from 'crypto';
 import {
@@ -18,8 +18,27 @@ import {
   ErrorCodes,
 } from '../domain/services/result.js';
 import { createChildLogger } from '../lib/logger.js';
+import type { AgentBackend } from './AgentRunner.js';
+import type { SessionTable } from '../db/types.js';
 
 const logger = createChildLogger('SqliteRepo');
+
+function mapSession(row: Selectable<SessionTable>): Session {
+  return {
+    id: row.id,
+    slackChannelId: row.slack_channel_id,
+    slackThreadTs: row.slack_thread_ts,
+    // Compatibility alias for integrations still reading the old field.
+    claudeSessionId: row.claude_session_id,
+    agentBackend: row.agent_backend,
+    agentSessionId: row.agent_session_id,
+    agentSessionActiveAt: row.agent_session_active_at,
+    agentSessionRevision: row.agent_session_revision,
+    agentBackendPinned: row.agent_backend_pinned !== 0,
+    createdAt: row.created_at,
+    lastActiveAt: row.last_active_at,
+  };
+}
 
 /**
  * SQLite repository for sessions and messages
@@ -54,14 +73,7 @@ export class SqliteRepo {
         return ok(null);
       }
 
-      return ok({
-        id: row.id,
-        slackChannelId: row.slack_channel_id,
-        slackThreadTs: row.slack_thread_ts,
-        claudeSessionId: row.claude_session_id,
-        createdAt: row.created_at,
-        lastActiveAt: row.last_active_at,
-      });
+      return ok(mapSession(row));
     } catch (error) {
       logger.error({ error, channelId, threadTs }, 'Failed to find session');
       return err(
@@ -84,6 +96,13 @@ export class SqliteRepo {
           slack_channel_id: session.slackChannelId,
           slack_thread_ts: session.slackThreadTs,
           claude_session_id: session.claudeSessionId,
+          agent_backend: session.agentBackend,
+          agent_session_id: session.agentSessionId,
+          agent_session_active_at: session.agentSessionActiveAt,
+          agent_session_revision: session.agentSessionRevision,
+          agent_backend_pinned: session.agentBackendPinned ? 1 : 0,
+          run_lease_owner: null,
+          run_lease_expires_at: null,
           created_at: session.createdAt,
           last_active_at: session.lastActiveAt,
         })
@@ -119,6 +138,10 @@ export class SqliteRepo {
         .updateTable('sessions')
         .set({
           claude_session_id: claudeSessionId,
+          agent_backend: 'claude',
+          agent_session_id: claudeSessionId,
+          agent_session_active_at: Date.now(),
+          agent_session_revision: sql`agent_session_revision + 1`,
           last_active_at: Date.now(),
         })
         .where('id', '=', sessionId)
@@ -136,6 +159,86 @@ export class SqliteRepo {
           error
         )
       );
+    }
+  }
+
+  /** Atomically replace the active provider/session pair for a Slack thread. */
+  async updateAgentSession(
+    sessionId: string,
+    backend: AgentBackend,
+    agentSessionId: string,
+    expectedRevision?: number,
+    pinBackend?: boolean,
+  ): Promise<Result<boolean>> {
+    try {
+      const updates = {
+        agent_backend: backend,
+        agent_session_id: agentSessionId,
+        agent_session_active_at: Date.now(),
+        agent_session_revision: sql<number>`agent_session_revision + 1`,
+        // Keep this populated during the compatibility release only when the
+        // active provider is Claude. Never put Codex IDs in a Claude column.
+        claude_session_id: backend === 'claude' ? agentSessionId : null,
+        ...(pinBackend === undefined
+          ? {}
+          : { agent_backend_pinned: pinBackend ? 1 : 0 }),
+      };
+      let query = this.db
+        .updateTable('sessions')
+        .set(updates)
+        .where('id', '=', sessionId);
+      if (expectedRevision !== undefined) {
+        query = query.where('agent_session_revision', '=', expectedRevision);
+      }
+      const result = await query.executeTakeFirst();
+      const updated = Number(result.numUpdatedRows) === 1;
+      if (!updated) {
+        logger.warn({ sessionId, backend, expectedRevision }, 'Agent session update lost a revision race');
+      }
+      return ok(updated);
+    } catch (error) {
+      logger.error({ error, sessionId, backend }, 'Failed to update agent session');
+      return err(createError(ErrorCodes.DATABASE_ERROR, 'Failed to update agent session', error));
+    }
+  }
+
+  /** Acquire a cross-process lease so two daemons cannot resume one provider session concurrently. */
+  async acquireRunLease(
+    sessionId: string,
+    owner: string,
+    leaseMs: number,
+  ): Promise<Result<boolean>> {
+    try {
+      const now = Date.now();
+      const result = await this.db
+        .updateTable('sessions')
+        .set({ run_lease_owner: owner, run_lease_expires_at: now + leaseMs })
+        .where('id', '=', sessionId)
+        .where((eb) =>
+          eb.or([
+            eb('run_lease_expires_at', 'is', null),
+            eb('run_lease_expires_at', '<', now),
+            eb('run_lease_owner', '=', owner),
+          ]),
+        )
+        .executeTakeFirst();
+      return ok(Number(result.numUpdatedRows) === 1);
+    } catch (error) {
+      return err(createError(ErrorCodes.DATABASE_ERROR, 'Failed to acquire run lease', error));
+    }
+  }
+
+  async releaseRunLease(sessionId: string, owner: string): Promise<Result<void>> {
+    try {
+      await this.db
+        .updateTable('sessions')
+        .set({ run_lease_owner: null, run_lease_expires_at: null })
+        .where('id', '=', sessionId)
+        .where('run_lease_owner', '=', owner)
+        .execute();
+      return ok(undefined);
+    } catch (error) {
+      return err(createError(ErrorCodes.DATABASE_ERROR, 'Failed to release run lease', error));
     }
   }
 
@@ -292,14 +395,7 @@ export class SqliteRepo {
         .limit(limit)
         .execute();
 
-      const sessions = rows.map((row) => ({
-        id: row.id,
-        slackChannelId: row.slack_channel_id,
-        slackThreadTs: row.slack_thread_ts,
-        claudeSessionId: row.claude_session_id,
-        createdAt: row.created_at,
-        lastActiveAt: row.last_active_at,
-      }));
+      const sessions = rows.map(mapSession);
 
       logger.debug({ count: sessions.length, sinceMs }, 'Retrieved recent sessions');
 
@@ -425,12 +521,7 @@ export class SqliteRepo {
         .execute();
 
       const sessions = rows.map((row) => ({
-        id: row.id,
-        slackChannelId: row.slack_channel_id,
-        slackThreadTs: row.slack_thread_ts,
-        claudeSessionId: row.claude_session_id,
-        createdAt: row.created_at,
-        lastActiveAt: row.last_active_at,
+        ...mapSession(row),
         lastSynthesizedAt: row.last_synthesized_at ?? null,
       }));
 

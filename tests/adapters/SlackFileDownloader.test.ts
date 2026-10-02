@@ -136,11 +136,95 @@ describe('SlackFileDownloader', () => {
       expect(fetchSpy).not.toHaveBeenCalled();
     });
 
-    it('rejects audio files', async () => {
+    // Replaced the old `rejects audio files` case. Audio is now downloaded and
+    // transcribed on ingest; see docs/voice-messages.md. Note the old test kept
+    // passing after the behaviour changed, because with no fetch mock it fell
+    // through to a real network call that failed for unrelated reasons.
+    it('accepts ordinary audio uploads', async () => {
+      fetchSpy.mockResolvedValueOnce(makeResponse(Buffer.from('fake audio')));
       const result = await downloader.download(
-        makeFile({ mimetype: 'audio/mp3', filetype: 'mp3', name: 'song.mp3' }),
+        makeFile({ mimetype: 'audio/mpeg', filetype: 'mp3', name: 'song.mp3' }),
       );
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.isVoiceMessage).toBe(false);
+      }
+    });
+
+    it('accepts a Slack voice message and flags it as one', async () => {
+      fetchSpy.mockResolvedValueOnce(makeResponse(Buffer.from('fake m4a')));
+      const result = await downloader.download(
+        makeFile({
+          mimetype: 'audio/mp4',
+          filetype: 'm4a',
+          name: 'audio_message.m4a',
+          subtype: 'slack_audio',
+          duration_ms: 19101,
+        }),
+      );
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.isVoiceMessage).toBe(true);
+        expect(result.value.durationMs).toBe(19101);
+      }
+    });
+
+    // The subtype is what Slack actually promises. A client shipping a voice
+    // note under a video mimetype must not be rejected before we look at it.
+    it('accepts slack_audio even when the mimetype is not audio/*', async () => {
+      fetchSpy.mockResolvedValueOnce(makeResponse(Buffer.from('fake m4a')));
+      const result = await downloader.download(
+        makeFile({
+          mimetype: 'video/mp4',
+          filetype: 'mp4',
+          name: 'audio_message.m4a',
+          subtype: 'slack_audio',
+        }),
+      );
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.value.isVoiceMessage).toBe(true);
+    });
+
+    it('gives audio a neutral generated name, not the sender\'s', async () => {
+      fetchSpy.mockResolvedValueOnce(makeResponse(Buffer.from('fake audio')));
+      const result = await downloader.download(
+        makeFile({
+          id: 'F0EXAMPLE123',
+          mimetype: 'audio/mp4',
+          filetype: 'm4a',
+          name: 'evil\'; tell app "Finder".m4a',
+          subtype: 'slack_audio',
+        }),
+      );
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.path).toMatch(/\d+-F0EXAMPLE123\.m4a$/);
+        expect(result.value.path).not.toContain('evil');
+        // The real name is still recoverable.
+        expect(result.value.originalName).toContain('evil');
+      }
+    });
+
+    it('retries audio once before giving up', async () => {
+      fetchSpy.mockResolvedValueOnce(makeResponse(Buffer.from(''), 404));
+      fetchSpy.mockResolvedValueOnce(makeResponse(Buffer.from('fake m4a')));
+      const result = await downloader.download(
+        makeFile({
+          mimetype: 'audio/mp4',
+          filetype: 'm4a',
+          subtype: 'slack_audio',
+          url_private_download: 'https://files.slack.com/files-tmb/T0/F1/download/a.mp4',
+        }),
+      );
+      expect(result.ok).toBe(true);
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not retry non-audio downloads', async () => {
+      fetchSpy.mockResolvedValueOnce(makeResponse(Buffer.from(''), 404));
+      const result = await downloader.download(makeFile({ mimetype: 'image/png' }));
       expect(result.ok).toBe(false);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
     });
 
     it('accepts HEIC (handled by conversion downstream)', async () => {

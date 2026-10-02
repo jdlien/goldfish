@@ -35,7 +35,7 @@ That's it. One LaunchAgent runs everything.
 
 ### Initiate Tasks (Post to Slack)
 
-These spawn a Claude session and post the result to a Slack channel.
+These start a session in the selected backend and post the result to a Slack channel.
 
 | Type          | What it does                                                                                 |
 | ------------- | -------------------------------------------------------------------------------------------- |
@@ -144,15 +144,25 @@ Day formats: full names (`monday`), abbreviations (`mon`), keywords (`weekdays`,
 | --------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | `name`    | Same as `type`                   | Task identifier — used for lock files and log output. Only needed when you have multiple tasks of the same type.             |
 | `channel` | `GOLDFISH_DM_CHANNEL_ID` env var | Slack channel ID to post to. Required for initiate tasks unless the env var is set. Ignored for maintenance tasks.           |
-| `model`   | (varies by task)                 | Claude model override. Daily synthesis defaults to `claude-sonnet-4-6`. Initiate tasks use whatever Claude Code defaults to. |
+| `backend` | `GOLDFISH_BACKEND`               | Runtime override: `claude` or `codex`. Switching providers starts fresh context.                                             |
+| `model`   | Selected runtime default         | Provider-specific model override for this task.                                                                               |
+| `effort`  | Channel/global effort            | Provider reasoning-effort override.                                                                                           |
 | `context` | (none)                           | Extra text appended to the task prompt. Useful for steering a briefing toward specific topics.                               |
 | `enabled` | `true`                           | Set to `false` to disable a task without removing it from the file.                                                          |
 
-#### Model override values
+An explicit task `backend` is pinned to the Slack thread created by that check-in. Replies therefore resume the provider session that wrote the post, while the channel's normal backend remains unchanged for other threads.
 
-Common IDs (as of June 2026): `claude-sonnet-4-6` (default for synthesis), `claude-opus-4-8` (current top Opus — what Claude Code defaults to), `claude-fable-5` (new tier *above* Opus).
+#### Provider override example
 
-**On `claude-fable-5`:** Anthropic's most powerful model, a rung above Opus. Same 1M context / 128K output as Opus 4.8, but priced at $10/$50 per MTok — **double** Opus, so it burns your usage limits ~2× as fast. Reach for it only when top-end correctness genuinely outweighs cost (a gnarly long-horizon task); Opus 4.8 is the sensible default for nearly everything and Sonnet for volume. API gotcha if anything in Goldfish ever sets thinking explicitly: Fable shares Opus 4.7/4.8's surface (adaptive thinking only — `budget_tokens`/`temperature`/`top_p`/`top_k` all 400, prefills 400) **plus one extra** — an explicit `thinking: {type: "disabled"}` returns a 400 on Fable (it's accepted on Opus). Omit the `thinking` param entirely instead.
+```yaml
+- name: codex-morning
+  type: morning
+  at: "8:30am"
+  channel: C0ABC123
+  backend: codex
+  model: gpt-6-astra
+  effort: high
+```
 
 ## Commands
 

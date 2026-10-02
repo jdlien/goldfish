@@ -5,7 +5,7 @@ You are sending the FIRST message — the user has not said anything yet.
 
 1. Read FOCUS.md for current priorities
 2. Read memory/{{DATE}}.md (or yesterday) for recent context
-3. Check your workspace CLAUDE.md for any configured tools (email, calendar, etc.) and run them
+3. Check your workspace identity instructions (CLAUDE.md or AGENTS.md) for configured tools and run them
 
 ## Output Format
 

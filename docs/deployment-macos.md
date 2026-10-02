@@ -126,7 +126,7 @@ pnpm cli initiate -t <type>
 
 Supported types: `heartbeat`, `morning`, `weekly`, `exploration`.
 
-Each type looks for a prompt template in your workspace's `prompts/` directory first (e.g. `prompts/morning.md`), falling back to built-in defaults in `src/cli/initiate.ts`. The plumbing (loading environment, spawning Claude, posting to Slack, creating a session so thread replies continue the conversation) is shared. Adding a new scheduled proactive task is usually:
+Each type looks for a prompt template in your workspace's `prompts/` directory first (e.g. `prompts/morning.md`), falling back to built-in defaults in `src/cli/initiate.ts`. The plumbing (loading environment, running the selected agent backend, posting to Slack, creating a session so thread replies continue the conversation) is shared. Adding a new scheduled proactive task is usually:
 
 1. Create a prompt file in `prompts/<type>.md` in your workspace (or add a case to `buildPrompt()` in `src/cli/initiate.ts`)
 2. Add the new type to the `InitiateOptions.type` union in `src/cli/initiate.ts`

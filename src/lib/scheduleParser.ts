@@ -13,6 +13,7 @@
 
 import { parse as parseYaml } from 'yaml';
 import { readFileSync } from 'fs';
+import type { AgentBackend } from '../adapters/AgentRunner.js';
 
 export type InitiateTaskType = 'morning' | 'weekly' | 'exploration' | 'heartbeat';
 export type MaintenanceTaskType = 'daily-synthesis' | 'index-memory' | 'thread-synthesis';
@@ -41,8 +42,12 @@ export interface ScheduleTask {
   context?: string;
   /** Whether this task is active (default: true) */
   enabled?: boolean;
-  /** Model override for this task (e.g. "claude-opus-4-7", "claude-sonnet-4-6") */
+  /** Provider-compatible model override for this task. */
   model?: string;
+  /** Provider override for this task. */
+  backend?: AgentBackend;
+  /** Reasoning effort override for this task. */
+  effort?: string;
 }
 
 export interface ScheduleConfig {
@@ -238,6 +243,9 @@ export function loadSchedule(path: string): ScheduleConfig {
   for (const task of parsed.tasks) {
     if (!task.type) throw new Error(`Task "${task.name || '(unnamed)'}" needs a "type".`);
     if (!task.name) task.name = task.type;
+    if (task.backend && task.backend !== 'claude' && task.backend !== 'codex') {
+      throw new Error(`Task "${task.name}" has invalid backend "${task.backend}".`);
+    }
     if (INITIATE_TYPES.includes(task.type) && !task.channel && !process.env.GOLDFISH_DM_CHANNEL_ID) {
       throw new Error(`Task "${task.name}" (type: ${task.type}) needs a "channel" (or set GOLDFISH_DM_CHANNEL_ID in .env).`);
     }

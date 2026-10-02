@@ -1,6 +1,8 @@
 import chalk from 'chalk';
 import { createSlackClientFromEnv } from '../adapters/SlackBoltClient.js';
 import { ClaudeRunner } from '../adapters/ClaudeRunner.js';
+import { CodexRunner } from '../adapters/CodexRunner.js';
+import { CLAUDE_PATH, CODEX_NETWORK, CODEX_PATH, CODEX_SANDBOX } from '../config.js';
 import { createChildLogger } from '../lib/logger.js';
 
 const logger = createChildLogger('cli:auth');
@@ -35,13 +37,25 @@ export async function authStatus(): Promise<void> {
 
   // Check Claude CLI
   console.log('\nClaude CLI:');
-  const claudeRunner = new ClaudeRunner();
+  const claudeRunner = new ClaudeRunner(CLAUDE_PATH);
   const claudeResult = await claudeRunner.checkAvailable();
 
   if (claudeResult.ok) {
     console.log(`  ${chalk.green('✓')} Available: ${claudeResult.value}`);
   } else {
     console.log(`  ${chalk.red('✗')} Not available: ${claudeResult.error.message}`);
+  }
+
+  console.log('\nCodex CLI:');
+  const codexResult = await new CodexRunner({
+    codexPath: CODEX_PATH,
+    defaultSandbox: CODEX_SANDBOX,
+    defaultNetworkAccess: CODEX_NETWORK,
+  }).checkAvailable();
+  if (codexResult.ok) {
+    console.log(`  ${chalk.green('✓')} Available: ${codexResult.value}`);
+  } else {
+    console.log(`  ${chalk.red('✗')} Not available: ${codexResult.error.message}`);
   }
 
   console.log('');
@@ -85,13 +99,25 @@ export async function authTest(): Promise<void> {
 
   // Test Claude
   console.log('\nTesting Claude CLI...');
-  const claudeRunner = new ClaudeRunner();
+  const claudeRunner = new ClaudeRunner(CLAUDE_PATH);
   const claudeResult = await claudeRunner.checkAvailable();
 
   if (claudeResult.ok) {
     console.log(chalk.green(`✓ Claude CLI available: ${claudeResult.value}`));
   } else {
     console.log(chalk.yellow(`⚠ Claude CLI issue: ${claudeResult.error.message}`));
+  }
+
+  console.log('\nTesting Codex CLI...');
+  const codexResult = await new CodexRunner({
+    codexPath: CODEX_PATH,
+    defaultSandbox: CODEX_SANDBOX,
+    defaultNetworkAccess: CODEX_NETWORK,
+  }).checkAvailable();
+  if (codexResult.ok) {
+    console.log(chalk.green(`✓ Codex CLI available: ${codexResult.value}`));
+  } else {
+    console.log(chalk.yellow(`⚠ Codex CLI issue: ${codexResult.error.message}`));
   }
 
   console.log('');
