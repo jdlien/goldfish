@@ -9,28 +9,44 @@ import {
 import { createChildLogger } from '../lib/logger.js';
 import { WORKSPACE_PATH, DEFAULT_MAX_TURNS, DEFAULT_TIMEOUT_MS } from '../config.js';
 import { StreamEventParser, type StreamEvent } from './StreamEventParser.js';
+import {
+  buildAgentEnv,
+  type AgentResponse,
+  type AgentRunParams,
+  type AgentRunner,
+} from './AgentRunner.js';
 
 const logger = createChildLogger('ClaudeRunner');
+const SYNTHESIS_SYSTEM_PROMPT =
+  'You are a memory synthesis assistant. Output only the requested markdown. Do not use tools and do not ask questions.';
 
-export interface ClaudeResponse {
-  result: string;
-  sessionId: string;
-  costUsd?: number;
-  durationMs?: number;
-  numTurns?: number;
-}
+export type ClaudeResponse = AgentResponse;
+export type ClaudeRunParams = AgentRunParams;
+export { buildAgentEnv } from './AgentRunner.js';
 
-export interface ClaudeRunParams {
-  prompt: string;
-  resumeSessionId?: string;
-  maxTurns?: number;
-  timeoutMs?: number;
-  model?: string;
-  /** Thinking effort level: low | medium | high | xhigh | max. Omit for CLI default. */
-  effort?: string;
-}
-
-const SLACK_SYSTEM_PROMPT = `You are responding via Slack. Format output for Slack's limited markdown ("mrkdwn"):
+/**
+ * Slack formatting guidance, appended to the system prompt at session creation.
+ *
+ * There are two delivery surfaces and they have different capabilities:
+ *
+ *  - LEGACY (`chat.postMessage` / `chat.update`): output passes through
+ *    `formatForSlack()`, which flattens markdown tables to bullet rows and
+ *    headers to bold text. Used by `initiate` briefings and by both
+ *    non-native branches in `cli/start.ts`.
+ *  - NATIVE (`chat.startStream`): Slack renders markdown server-side and
+ *    tables arrive as real Slack table elements. Raw model output is sent
+ *    as-is — `formatForSlack()` never runs.
+ *
+ * Only the caller knows which surface it is delivering to, so this is a
+ * parameter rather than a module-level flag: `runStream()` serves both the
+ * native branch (start.ts) and the legacy streaming branch.
+ *
+ * NOTE (2026-09-11): table support on the native path is verified. The
+ * remaining rules below are inherited from the original 2026-04-04 prompt and
+ * are NOT yet tested against native rendering — headers, `**bold**` and
+ * numbered lists may also be stale. Verify before relaxing them.
+ */
+export const SLACK_FORMATTING_LEGACY = `You are responding via Slack. Format output for Slack's limited markdown ("mrkdwn"):
 
 SLACK FORMATTING RULES:
 - NO TABLES - Slack cannot render them. Use bullet lists or simple text instead.
@@ -49,9 +65,33 @@ INSTEAD OF TABLES, USE:
 Keep responses concise. If running long operations, acknowledge first.`;
 
 /**
+ * Native-streaming variant. Identical to the legacy prompt except that real
+ * markdown tables are supported and preferred for tabular data.
+ */
+export const SLACK_FORMATTING_NATIVE = `You are responding via Slack via the native streaming API, which renders markdown server-side.
+
+SLACK FORMATTING RULES:
+- TABLES RENDER NATIVELY - use real markdown tables for tabular data. Do not flatten a comparison into bullet rows.
+- NO HEADERS (# ## ###) - Use *bold text* on its own line instead.
+- Bold: use *single asterisks* not **double**
+- Italic: use _underscores_ not *single asterisks*
+- Code: \`inline\` and \`\`\`blocks\`\`\` work fine
+- Links: <url|text> format (but standard [text](url) will be converted)
+- Bullet lists work, but numbered lists render poorly
+
+Keep responses concise. If running long operations, acknowledge first.`;
+
+/** Pick the formatting guidance that matches the caller's delivery surface. */
+export function slackSystemPrompt(nativeMarkdown: boolean | undefined): string {
+  return nativeMarkdown ? SLACK_FORMATTING_NATIVE : SLACK_FORMATTING_LEGACY;
+}
+
+/**
  * Runner for spawning Claude Code CLI
  */
-export class ClaudeRunner {
+export class ClaudeRunner implements AgentRunner {
+  readonly backend = 'claude' as const;
+  readonly capabilities = { textDeltas: true, toolEvents: true, imageInputs: false };
   private claudePath: string;
 
   constructor(claudePath: string = 'claude') {
@@ -69,6 +109,12 @@ export class ClaudeRunner {
       timeoutMs = DEFAULT_TIMEOUT_MS,
       model,
       effort,
+      nativeMarkdown,
+      slackChannelId,
+      slackThreadTs,
+      signal,
+      profile,
+      workingDirectory,
     } = params;
 
     const args: string[] = [
@@ -89,10 +135,12 @@ export class ClaudeRunner {
       args.push('--effort', effort);
     }
 
-    if (resumeSessionId) {
+    if (profile === 'synthesis') {
+      args.push('--tools', '', '--system-prompt', SYNTHESIS_SYSTEM_PROMPT);
+    } else if (resumeSessionId) {
       args.push('--resume', resumeSessionId);
     } else {
-      args.push('--append-system-prompt', SLACK_SYSTEM_PROMPT);
+      args.push('--append-system-prompt', slackSystemPrompt(nativeMarkdown));
     }
 
     logger.info(
@@ -110,7 +158,13 @@ export class ClaudeRunner {
     const startTime = Date.now();
 
     try {
-      const output = await this.spawnClaude(args, timeoutMs);
+      const output = await this.spawnClaude(
+        args,
+        timeoutMs,
+        buildAgentEnv(process.env, { slackChannelId, slackThreadTs }),
+        signal,
+        workingDirectory,
+      );
       const durationMs = Date.now() - startTime;
 
       const response = ClaudeRunner.parseResponse(output);
@@ -129,6 +183,7 @@ export class ClaudeRunner {
 
       return ok({
         ...response.value,
+        backend: 'claude',
         durationMs,
       });
     } catch (error) {
@@ -154,15 +209,17 @@ export class ClaudeRunner {
   /**
    * Spawn Claude process and capture output
    */
-  private spawnClaude(args: string[], timeoutMs: number): Promise<string> {
+  private spawnClaude(
+    args: string[],
+    timeoutMs: number,
+    env: NodeJS.ProcessEnv = buildAgentEnv(process.env),
+    signal?: AbortSignal,
+    workingDirectory: string = WORKSPACE_PATH,
+  ): Promise<string> {
     return new Promise((resolve, reject) => {
       const proc = spawn(this.claudePath, args, {
-        cwd: WORKSPACE_PATH,
-        env: {
-          ...process.env,
-          NO_COLOR: '1',
-          GOLDFISH_SESSION: '1',
-        },
+        cwd: workingDirectory,
+        env,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
@@ -177,13 +234,26 @@ export class ClaudeRunner {
         stderr += data.toString();
       });
 
+      const forceKill = () => setTimeout(() => {
+        if (proc.exitCode === null) proc.kill('SIGKILL');
+      }, 2_000).unref();
+      const onAbort = () => {
+        proc.kill('SIGTERM');
+        forceKill();
+        reject(new Error('Claude CLI aborted'));
+      };
+      if (signal?.aborted) onAbort();
+      else signal?.addEventListener('abort', onAbort, { once: true });
+
       const timer = setTimeout(() => {
         proc.kill('SIGTERM');
+        forceKill();
         reject(new Error(`Claude CLI timeout after ${timeoutMs}ms`));
       }, timeoutMs);
 
       proc.on('close', (code) => {
         clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
 
         if (code !== 0) {
           logger.error(
@@ -199,6 +269,7 @@ export class ClaudeRunner {
 
       proc.on('error', (error) => {
         clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
         reject(error);
       });
     });
@@ -219,6 +290,7 @@ export class ClaudeRunner {
       }
 
       return ok({
+        backend: 'claude',
         result,
         sessionId,
         costUsd: json.cost_usd ?? json.costUsd,
@@ -252,6 +324,12 @@ export class ClaudeRunner {
       timeoutMs = DEFAULT_TIMEOUT_MS,
       model,
       effort,
+      nativeMarkdown,
+      slackChannelId,
+      slackThreadTs,
+      signal,
+      profile,
+      workingDirectory,
     } = params;
 
     const args: string[] = [
@@ -274,10 +352,12 @@ export class ClaudeRunner {
       args.push('--effort', effort);
     }
 
-    if (resumeSessionId) {
+    if (profile === 'synthesis') {
+      args.push('--tools', '', '--system-prompt', SYNTHESIS_SYSTEM_PROMPT);
+    } else if (resumeSessionId) {
       args.push('--resume', resumeSessionId);
     } else {
-      args.push('--append-system-prompt', SLACK_SYSTEM_PROMPT);
+      args.push('--append-system-prompt', slackSystemPrompt(nativeMarkdown));
     }
 
     logger.info(
@@ -305,6 +385,7 @@ export class ClaudeRunner {
     const parser = new StreamEventParser((event) => {
       if (event.type === 'result') {
         finalResponse = {
+          backend: 'claude',
           result: event.result,
           sessionId: event.sessionId,
           costUsd: event.costUsd,
@@ -320,12 +401,8 @@ export class ClaudeRunner {
     });
 
     const proc = spawn(this.claudePath, args, {
-      cwd: WORKSPACE_PATH,
-      env: {
-        ...process.env,
-        NO_COLOR: '1',
-        GOLDFISH_SESSION: '1',
-      },
+      cwd: workingDirectory ?? WORKSPACE_PATH,
+      env: buildAgentEnv(process.env, { slackChannelId, slackThreadTs }),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -341,6 +418,9 @@ export class ClaudeRunner {
 
     const timer = setTimeout(() => {
       proc.kill('SIGTERM');
+      setTimeout(() => {
+        if (proc.exitCode === null) proc.kill('SIGKILL');
+      }, 2_000).unref();
       streamError = new Error(`Claude CLI timeout after ${timeoutMs}ms`);
       done = true;
       if (resolve) {
@@ -349,8 +429,24 @@ export class ClaudeRunner {
       }
     }, timeoutMs);
 
+    const onAbort = () => {
+      proc.kill('SIGTERM');
+      setTimeout(() => {
+        if (proc.exitCode === null) proc.kill('SIGKILL');
+      }, 2_000).unref();
+      streamError = new Error('Claude CLI aborted');
+      done = true;
+      if (resolve) {
+        resolve();
+        resolve = null;
+      }
+    };
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener('abort', onAbort, { once: true });
+
     proc.on('close', (code) => {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
       parser.flush();
 
       if (code !== 0 && !streamError) {
@@ -370,6 +466,7 @@ export class ClaudeRunner {
 
     proc.on('error', (error) => {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
       streamError = error;
       done = true;
       if (resolve) {
@@ -378,12 +475,22 @@ export class ClaudeRunner {
       }
     });
 
-    // Yield events as they arrive
-    while (!done || eventQueue.length > 0) {
-      if (eventQueue.length > 0) {
-        yield eventQueue.shift()!;
-      } else if (!done) {
-        await new Promise<void>((r) => { resolve = r; });
+    try {
+      // Yield events as they arrive
+      while (!done || eventQueue.length > 0) {
+        if (eventQueue.length > 0) {
+          yield eventQueue.shift()!;
+        } else if (!done) {
+          await new Promise<void>((r) => { resolve = r; });
+        }
+      }
+    } finally {
+      signal?.removeEventListener('abort', onAbort);
+      if (!done && proc.exitCode === null) {
+        proc.kill('SIGTERM');
+        setTimeout(() => {
+          if (proc.exitCode === null) proc.kill('SIGKILL');
+        }, 2_000).unref();
       }
     }
 

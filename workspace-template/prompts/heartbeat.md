@@ -3,7 +3,7 @@ You are NOT initiating a conversation. You are checking if anything needs the us
 
 ## What to check
 
-1. Check your workspace CLAUDE.md for any configured tools (email, calendar, etc.) and run them
+1. Check your workspace identity instructions (CLAUDE.md or AGENTS.md) for configured tools and run them
 2. Read FOCUS.md — are there deadlines approaching or items at risk?
 3. Read memory/{{DATE}}.md for today's context
 

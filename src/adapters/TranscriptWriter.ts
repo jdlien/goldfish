@@ -8,6 +8,7 @@ import { join, dirname } from 'path';
 import { format } from 'date-fns';
 import { createChildLogger } from '../lib/logger.js';
 import { SESSIONS_PATH } from '../config.js';
+import type { AgentUsage } from './AgentRunner.js';
 
 const logger = createChildLogger('TranscriptWriter');
 
@@ -17,9 +18,14 @@ export interface TranscriptEntry {
   slackThread: string;
   userMessage: string;
   assistantResponse: string;
-  claudeSessionId: string | null;
+  backend?: 'claude' | 'codex';
+  agentSessionId?: string | null;
+  model?: string;
+  /** @deprecated Read compatibility for pre-provider-neutral transcripts. */
+  claudeSessionId?: string | null;
   durationMs?: number;
   costUsd?: number;
+  usage?: AgentUsage;
 }
 
 /**

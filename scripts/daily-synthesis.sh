@@ -11,7 +11,9 @@
 #
 # Environment variables:
 #   GOLDFISH_WORKSPACE         — workspace path (default: ~/goldfish-workspace)
-#   GOLDFISH_SYNTHESIS_MODEL   — Claude model to use (default: claude-sonnet-4-6)
+#   GOLDFISH_SYNTHESIS_BACKEND — claude or codex (defaults to GOLDFISH_BACKEND, then claude)
+#   GOLDFISH_SYNTHESIS_MODEL   — provider model override
+#   GOLDFISH_SYNTHESIS_EFFORT  — optional provider reasoning effort
 #   GOLDFISH_SYNTHESIS_MAX_KB  — max transcript KB fed to the model (default: 200)
 #   GOLDFISH_SYNTHESIS_DATE    — date to synthesize (default: yesterday)
 #   GOLDFISH_CLAUDE_BIN        — claude executable (default: claude); overridden in tests
@@ -19,7 +21,10 @@
 set -euo pipefail
 
 WORKSPACE="${GOLDFISH_WORKSPACE:-$HOME/goldfish-workspace}"
-MODEL="${GOLDFISH_SYNTHESIS_MODEL:-claude-sonnet-4-6}"
+CLAUDE_MODEL="${GOLDFISH_SYNTHESIS_MODEL:-claude-sonnet-4-6}"
+CODEX_MODEL="${GOLDFISH_SYNTHESIS_MODEL:-${GOLDFISH_CODEX_MODEL:-}}"
+BACKEND="${GOLDFISH_SYNTHESIS_BACKEND:-${GOLDFISH_BACKEND:-claude}}"
+EFFORT="${GOLDFISH_SYNTHESIS_EFFORT:-${GOLDFISH_EFFORT:-}}"
 MAX_INPUT_KB="${GOLDFISH_SYNTHESIS_MAX_KB:-200}"
 CLAUDE_BIN="${GOLDFISH_CLAUDE_BIN:-claude}"
 DATE="${GOLDFISH_SYNTHESIS_DATE:-$(date -d "yesterday" +%Y-%m-%d 2>/dev/null || date -v-1d +%Y-%m-%d)}"
@@ -103,19 +108,40 @@ Write ONLY the sections that are MISSING from the notes above.
 PROMPT_EOF
 )
 
-# Run from /tmp to avoid CLAUDE.md auto-discovery (prevents persona loading).
-# --system-prompt: override default system prompt to prevent tool loops.
-# --max-turns 10: generous budget — with no tools available, it should use 1.
+# Run from an isolated scratch directory to avoid workspace instruction discovery.
 RAW_FILE="${SCRATCH}/raw.md"
-cd /tmp
-"$CLAUDE_BIN" -p "$PROMPT" \
-  --model "$MODEL" \
-  --max-turns 10 \
-  --dangerously-skip-permissions \
-  --output-format text \
-  --system-prompt "You are a memory synthesis assistant. You are writing sections that will be APPENDED to an existing daily log. Output ONLY new markdown sections that the existing notes do not already contain. Never restate existing content. Do not use any tools. Do not ask questions." \
-  > "$RAW_FILE" 2>/dev/null || echo "Warning: synthesis command failed" >&2
-cd - > /dev/null
+if [ -n "${GOLDFISH_AGENT_RUNNER_ENTRY:-}" ]; then
+  AGENT_ARGS=("$GOLDFISH_AGENT_RUNNER_ENTRY" agent-run --backend "$BACKEND" --cwd "$SCRATCH" --timeout-ms 900000 --max-turns 10)
+  if [ "$BACKEND" = "claude" ]; then
+    AGENT_ARGS+=(--model "$CLAUDE_MODEL")
+  elif [ -n "$CODEX_MODEL" ]; then
+    AGENT_ARGS+=(--model "$CODEX_MODEL")
+  fi
+  if [ -n "$EFFORT" ]; then AGENT_ARGS+=(--effort "$EFFORT"); fi
+  printf '%s' "$PROMPT" | "${GOLDFISH_AGENT_RUNNER_BIN:-${GOLDFISH_NODE_BIN:-node}}" "${AGENT_ARGS[@]}" > "$RAW_FILE" 2>/dev/null || echo "Warning: synthesis command failed" >&2
+elif [ "$BACKEND" = "codex" ]; then
+  if [ -n "${GOLDFISH_CODEX_PATH:-}" ]; then
+    CODEX_COMMAND=("$GOLDFISH_CODEX_PATH")
+  else
+    CODEX_ENTRY=$("${GOLDFISH_NODE_BIN:-node}" --input-type=module -e 'import {createRequire} from "node:module"; const r=createRequire(import.meta.resolve("@openai/codex-sdk")); process.stdout.write(r.resolve("@openai/codex/bin/codex.js"));')
+    CODEX_COMMAND=("${GOLDFISH_NODE_BIN:-node}" "$CODEX_ENTRY")
+  fi
+  CODEX_ARGS=(exec --ephemeral --skip-git-repo-check --ignore-rules -s read-only -C "$SCRATCH" -o "$RAW_FILE" -c 'approval_policy="never"' -c 'web_search="disabled"')
+  if [ -n "$CODEX_MODEL" ]; then
+    CODEX_ARGS+=(-m "$CODEX_MODEL")
+  fi
+  if [ -n "$EFFORT" ]; then CODEX_ARGS+=(-c "model_reasoning_effort=\"$EFFORT\""); fi
+  printf '%s' "$PROMPT" | "${CODEX_COMMAND[@]}" "${CODEX_ARGS[@]}" - >/dev/null 2>&1 || echo "Warning: synthesis command failed" >&2
+elif [ "$BACKEND" = "claude" ]; then
+  cd "$SCRATCH"
+  CLAUDE_ARGS=(-p "$PROMPT" --model "$CLAUDE_MODEL" --max-turns 10 --dangerously-skip-permissions --output-format text --tools '' --system-prompt "You are a memory synthesis assistant. You are writing sections that will be APPENDED to an existing daily log. Output ONLY new markdown sections that the existing notes do not already contain. Never restate existing content. Do not use any tools. Do not ask questions.")
+  if [ -n "$EFFORT" ]; then CLAUDE_ARGS+=(--effort "$EFFORT"); fi
+  "$CLAUDE_BIN" "${CLAUDE_ARGS[@]}" > "$RAW_FILE" 2>/dev/null || echo "Warning: synthesis command failed" >&2
+  cd - > /dev/null
+else
+  echo "Unsupported synthesis backend: $BACKEND" >&2
+  exit 1
+fi
 
 if [ ! -s "$RAW_FILE" ]; then
   echo "Synthesis produced empty output, leaving ${DATE} file untouched"

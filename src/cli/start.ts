@@ -1,6 +1,8 @@
 import chalk from 'chalk';
+import { randomUUID } from 'crypto';
 import { createSlackClientFromEnv, type SlackBoltClient } from '../adapters/SlackBoltClient.js';
-import { ClaudeRunner } from '../adapters/ClaudeRunner.js';
+import { AgentRunnerRegistry } from '../adapters/AgentRunnerFactory.js';
+import type { AgentUsage } from '../adapters/AgentRunner.js';
 import { SqliteRepo } from '../adapters/SqliteRepo.js';
 import { writeTranscript } from '../adapters/TranscriptWriter.js';
 import { initDb, closeDb } from '../db/index.js';
@@ -36,12 +38,16 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   SHOW_TOOLS,
   validateWorkspace,
-  effortForChannel,
-  modelForChannel,
+  validateConfiguration,
+  runtimeForConversation,
+  DEFAULT_BACKEND,
+  BACKEND_BY_CHANNEL,
+  workspaceWarnings,
   briefForChannel,
   OWNER_USER_ID,
   MAX_TRANSCRIBE_DURATION_MS,
   MAX_TRANSCRIBE_TOTAL_DURATION_MS,
+  DEFAULT_TIMEOUT_MS,
 } from '../config.js';
 
 interface SlackDmMessage {
@@ -60,9 +66,10 @@ const logger = createChildLogger('cli:start');
 let isShuttingDown = false;
 let slackClient: SlackBoltClient | null = null;
 
-// Per-session concurrency lock: serializes Claude invocations so two messages
+// Per-session concurrency lock: serializes agent invocations so two messages
 // in the same thread don't spawn competing processes on the same session.
 const sessionLocks = new Map<string, Promise<void>>();
+const activeRunControllers = new Set<AbortController>();
 
 interface NativeStreamDeliveryRecoveryParams {
   webClient: ReturnType<SlackBoltClient['getWebClient']>;
@@ -70,7 +77,10 @@ interface NativeStreamDeliveryRecoveryParams {
   threadTs: string;
   messageTs: string;
   sessionId: string;
-  claudeSessionId: string | null;
+  agentSessionId?: string | null;
+  backend?: 'claude' | 'codex';
+  /** @deprecated compatibility for callers/tests using the old name. */
+  claudeSessionId?: string | null;
   nativeStreamer: SlackNativeStreamer;
   fullText: string;
 }
@@ -88,7 +98,12 @@ export async function handleNativeStreamDeliveryRecovery(
   logger.warn(
     {
       sessionId: params.sessionId,
-      claudeSessionId: params.claudeSessionId,
+      agentSessionId: params.agentSessionId ?? params.claudeSessionId ?? null,
+      backend: params.backend ?? 'claude',
+      claudeSessionId:
+        (params.backend ?? 'claude') === 'claude'
+          ? (params.claudeSessionId ?? params.agentSessionId ?? null)
+          : null,
       reasons: deliveryStatus.issues.map((issue) => issue.reason),
       rawTextLength: params.fullText.length,
       unsentSuffixLength: deliveryStatus.unsentSuffixLength,
@@ -111,7 +126,12 @@ export async function handleNativeStreamDeliveryRecovery(
     threadTs: params.threadTs,
     messageTs: params.messageTs,
     sessionId: params.sessionId,
-    claudeSessionId: params.claudeSessionId,
+    agentSessionId: params.agentSessionId ?? params.claudeSessionId ?? null,
+    backend: params.backend ?? 'claude',
+    claudeSessionId:
+      (params.backend ?? 'claude') === 'claude'
+        ? (params.claudeSessionId ?? params.agentSessionId ?? null)
+        : null,
     deliveryStatus,
     rawTextLength: params.fullText.length,
     rawTextPreview: params.fullText.slice(0, 500),
@@ -121,17 +141,68 @@ export async function handleNativeStreamDeliveryRecovery(
   return recovery;
 }
 
+async function persistAgentSession(
+  repo: SqliteRepo,
+  client: SlackBoltClient,
+  params: {
+    sessionId: string;
+    backend: 'claude' | 'codex';
+    agentSessionId: string;
+    expectedRevision: number;
+    channel: string;
+    threadTs?: string;
+  },
+): Promise<boolean> {
+  const saved = await repo.updateAgentSession(
+    params.sessionId,
+    params.backend,
+    params.agentSessionId,
+    params.expectedRevision,
+  );
+  if (saved.ok && saved.value) return true;
+
+  logger.error(
+    { error: saved.ok ? undefined : saved.error, ...params },
+    'Failed to persist agent session continuity',
+  );
+  const warning = await client.sendMessage({
+    channel: params.channel,
+    threadTs: params.threadTs,
+    text: '⚠️ I sent the response, but couldn’t save its conversation state. Your next reply may start with incomplete context.',
+  });
+  if (!warning.ok) {
+    logger.error({ error: warning.error, sessionId: params.sessionId }, 'Failed to send continuity warning');
+  }
+  return false;
+}
+
 /**
  * Start the Goldfish bot
  */
 export async function start(): Promise<void> {
   console.log(chalk.bold('\n🐟 Starting Goldfish...\n'));
 
-  // Validate workspace before doing anything else
-  const workspaceError = validateWorkspace();
-  if (workspaceError) {
-    console.log(chalk.red(workspaceError));
+  const configErrors = validateConfiguration();
+  if (configErrors.length > 0) {
+    console.log(chalk.red(`Invalid Goldfish configuration:\n- ${configErrors.join('\n- ')}`));
     process.exit(1);
+  }
+
+  const configuredBackends = new Set<'claude' | 'codex'>([DEFAULT_BACKEND]);
+  for (const backend of Object.values(BACKEND_BY_CHANNEL)) {
+    if (backend === 'claude' || backend === 'codex') configuredBackends.add(backend);
+  }
+
+  // Validate every configured route before accepting Slack messages.
+  for (const backend of configuredBackends) {
+    const workspaceError = validateWorkspace(backend);
+    if (workspaceError) {
+      console.log(chalk.red(workspaceError));
+      process.exit(1);
+    }
+    for (const warning of workspaceWarnings(backend)) {
+      console.log(chalk.yellow(`⚠ ${warning}`));
+    }
   }
 
   // Initialize database
@@ -156,8 +227,7 @@ export async function start(): Promise<void> {
     process.exit(1);
   }
 
-  // Create Claude runner
-  const claudeRunner = new ClaudeRunner();
+  const runners = new AgentRunnerRegistry();
 
   // Create file downloader (for Slack image/attachment handling)
   const slackBotToken = process.env.SLACK_BOT_TOKEN ?? '';
@@ -165,11 +235,13 @@ export async function start(): Promise<void> {
   const audioTranscriber = new AudioTranscriber();
   const pdfTextLayer = new PdfTextLayer();
 
-  // Verify Claude is available
-  const claudeCheck = await claudeRunner.checkAvailable();
-  if (!claudeCheck.ok) {
-    console.log(chalk.yellow(`⚠ Warning: ${claudeCheck.error.message}`));
-    console.log(chalk.yellow('  Bot will respond with errors until Claude is available.'));
+  // Verify every configured runtime, including channel-specific overrides.
+  for (const backend of configuredBackends) {
+    const runnerCheck = await runners.get(backend).checkAvailable();
+    if (!runnerCheck.ok) {
+      console.log(chalk.yellow(`⚠ Warning: ${runnerCheck.error.message}`));
+      console.log(chalk.yellow(`  ${backend} routes will respond with errors until it is available.`));
+    }
   }
 
   const app = slackClient.getApp();
@@ -238,7 +310,7 @@ export async function start(): Promise<void> {
     );
 
     // --- Per-session concurrency lock ---
-    // If a Claude process is already running for this thread, queue the
+    // If an agent run is already active for this thread, queue the
     // new message behind it so they don't fight over the same session.
     const lockKey = `${channelId}:${sessionKey}`;
     const isQueued = sessionLocks.has(lockKey);
@@ -262,7 +334,7 @@ export async function start(): Promise<void> {
       }
     } else {
       // Show a native "is thinking..." indicator immediately — this fires
-      // before session lookup, file downloads, or Claude spawn, so the user
+      // before session lookup, file downloads, or provider invocation, so the user
       // gets instant feedback. Slack auto-clears it when the stream starts.
       // Fire-and-forget: if the app isn't configured for assistant threads,
       // this degrades silently without blocking the main flow.
@@ -290,6 +362,9 @@ export async function start(): Promise<void> {
         }).catch(() => {});
       }
 
+    const leaseOwner = randomUUID();
+    let leasedSessionId: string | null = null;
+    let runController: AbortController | null = null;
     try {
       // Get or create session
       const sessionResult = await repo.getOrCreateSession(channelId, sessionKey);
@@ -301,9 +376,43 @@ export async function start(): Promise<void> {
 
       const session = sessionResult.value;
 
+      const lease = await repo.acquireRunLease(
+        session.id,
+        leaseOwner,
+        DEFAULT_TIMEOUT_MS + 60_000,
+      );
+      if (!lease.ok || !lease.value) {
+        logger.warn({ sessionId: session.id }, 'Session is leased by another Goldfish process');
+        await say({
+          text: '⏳ I’m still handling another message in this conversation. Please try again shortly.',
+          thread_ts: replyThreadTs,
+        });
+        return;
+      }
+      leasedSessionId = session.id;
+      runController = new AbortController();
+      activeRunControllers.add(runController);
+
+      const runtime = runtimeForConversation(channelId, session);
+      const runner = runners.get(runtime.backend);
+      const expectedSessionRevision = session.agentSessionRevision;
+      const runtimeWorkspaceError = validateWorkspace(runtime.backend);
+      if (runtimeWorkspaceError) {
+        logger.error({ backend: runtime.backend }, runtimeWorkspaceError);
+        await say({ text: `❌ ${runtimeWorkspaceError}`, thread_ts: replyThreadTs });
+        return;
+      }
+
       // Check session expiry — if too old, start fresh (don't resume stale context)
-      let resumeSessionId = session.claudeSessionId;
-      const sessionAge = Date.now() - session.lastActiveAt;
+      let resumeSessionId =
+        session.agentBackend === runtime.backend ? session.agentSessionId : null;
+      if (session.agentBackend && session.agentBackend !== runtime.backend) {
+        logger.info(
+          { sessionId: session.id, from: session.agentBackend, to: runtime.backend },
+          'Starting fresh context for requested backend switch',
+        );
+      }
+      const sessionAge = Date.now() - (session.agentSessionActiveAt ?? 0);
       if (resumeSessionId && sessionAge > SESSION_EXPIRY_MS) {
         logger.info(
           { sessionId: session.id, ageMs: sessionAge },
@@ -316,10 +425,11 @@ export async function start(): Promise<void> {
       // reply below contains developer instructions that must never be shown
       // to anyone but the owner.
       const senderIsOwner = OWNER_USER_ID ? msg.user === OWNER_USER_ID : true;
+      const imagePaths: string[] = [];
 
       // Download any file attachments (images, PDFs, text, code, etc.)
       // and fold them into the prompt as [Attached file: <path>] markers.
-      // The agent's personality (from workspace CLAUDE.md / IDENTITY.md)
+      // The agent's personality (from the provider bootstrap / IDENTITY.md)
       // handles the response naturally — no instructional prose injected.
       if (hasFiles) {
         const filesToProcess = msg.files!.slice(0, MAX_ATTACHMENTS_PER_MESSAGE);
@@ -376,6 +486,7 @@ export async function start(): Promise<void> {
           const isPdf =
             downloaded.mimetype.toLowerCase() === 'application/pdf' ||
             downloaded.path.toLowerCase().endsWith('.pdf');
+          const isImage = downloaded.mimetype.toLowerCase().startsWith('image/');
 
           if (isPdf) {
             // Cheap first (44ms on a 33MB file): does it already have text?
@@ -432,7 +543,10 @@ export async function start(): Promise<void> {
           }
 
           if (!isAudio) {
-            attachmentPaths.push(downloaded.path);
+            // Codex receives images as structured local-image inputs. Avoid
+            // also presenting the same file as an attachment-path marker.
+            if (isImage && runtime.backend === 'codex') imagePaths.push(downloaded.path);
+            else attachmentPaths.push(downloaded.path);
             continue;
           }
 
@@ -505,6 +619,9 @@ export async function start(): Promise<void> {
           documentParts,
           skipped,
         });
+        if (imagePaths.length > 0 && !userMessage.trim()) {
+          userMessage = '[Attached image]';
+        }
 
         // Scope missing is a special case — tell the OWNER how to fix it.
         // Anyone else gets a plain apology: the fix is developer instructions
@@ -521,7 +638,7 @@ export async function start(): Promise<void> {
           return;
         }
 
-        // If everything failed and there's no text, don't invoke Claude
+        // If everything failed and there's no text, don't invoke the agent
         if (!userMessage.trim()) {
           await say({
             text: '📎 I got your file but couldn\'t process it — sorry. Try a different format or describe what you wanted to share.',
@@ -554,6 +671,9 @@ export async function start(): Promise<void> {
         const header = [
           `[Goldfish context — not written by the sender]`,
           `Channel: ${channelId}`,
+          // Trace only — GOLDFISH_THREAD_TS is what send/upload actually read.
+          // This header is gated on channel/non-owner, so it is NOT the carrier.
+          msg.thread_ts ? `Thread: ${msg.thread_ts}` : null,
           `Message from: ${senderName} (${senderId})`,
           brief ? `Channel note: ${brief}` : null,
           `[end context]`,
@@ -571,7 +691,7 @@ export async function start(): Promise<void> {
         content: userMessage,
       });
 
-      // Run Claude and send response
+      // Run the selected agent backend and send its response
       logger.info(
         {
           sessionId: session.id,
@@ -579,7 +699,7 @@ export async function start(): Promise<void> {
           streaming: STREAMING_ENABLED,
           nativeStreaming: STREAMING_ENABLED && NATIVE_STREAMING_ENABLED,
         },
-        'Invoking Claude',
+        'Invoking agent runtime',
       );
 
       if (STREAMING_ENABLED && NATIVE_STREAMING_ENABLED) {
@@ -598,9 +718,10 @@ export async function start(): Promise<void> {
         );
 
         let result = '';
-        let claudeSessionId: string | undefined;
+        let agentSessionId: string | undefined;
         let durationMs: number | undefined;
         let costUsd: number | undefined;
+        let usage: AgentUsage | undefined;
         let nativeRecovery: NativeStreamRecoveryResult = {
           attempted: false,
           ok: true,
@@ -610,14 +731,21 @@ export async function start(): Promise<void> {
         try {
           nativeStreamer.start();
 
-          const stream = claudeRunner.runStream({
+          const stream = runner.runStream({
             prompt: userMessage,
             resumeSessionId: resumeSessionId ?? undefined,
-            effort: effortForChannel(channelId),
-            model: modelForChannel(channelId),
+            effort: runtime.effort,
+            model: runtime.model,
             // chat.startStream renders markdown server-side, so the model is
             // told tables are available. The legacy branch below must not.
             nativeMarkdown: true,
+            // The agent inherits the destination ITS OWN reply is going to, so
+            // a file it uploads lands beside its words. This branch delivers
+            // to streamThreadTs (always threaded), not replyThreadTs.
+            slackChannelId: channelId,
+            slackThreadTs: streamThreadTs,
+            signal: runController.signal,
+            imagePaths: runtime.backend === 'codex' ? imagePaths : undefined,
           });
 
           for await (const event of stream) {
@@ -633,9 +761,8 @@ export async function start(): Promise<void> {
                 await nativeStreamer.startTool(event.toolId, event.toolName);
                 break;
               case 'tool_end':
-                // Intentionally no-op: tool_end fires when Claude finishes
-                // generating the tool-call JSON, NOT when the tool finishes
-                // executing. Completion comes via tool_result.
+                // Intentionally no-op: tool_result is the authoritative
+                // completion event used by the Slack task timeline.
                 break;
               case 'tool_result': {
                 // Tool finished executing — mark complete with actual
@@ -657,9 +784,10 @@ export async function start(): Promise<void> {
               }
               case 'result':
                 result = event.result;
-                claudeSessionId = event.sessionId;
+                agentSessionId = event.sessionId;
                 durationMs = event.durationMs;
                 costUsd = event.costUsd;
+                usage = event.usage;
                 break;
             }
           }
@@ -679,12 +807,13 @@ export async function start(): Promise<void> {
             threadTs: streamThreadTs,
             messageTs: msg.ts,
             sessionId: session.id,
-            claudeSessionId: claudeSessionId ?? null,
+            agentSessionId: agentSessionId ?? null,
+            backend: runtime.backend,
             nativeStreamer,
             fullText: result,
           });
         } catch (error) {
-          logger.error({ error }, 'Native streaming Claude invocation failed');
+          logger.error({ error, backend: runtime.backend }, 'Native streaming agent invocation failed');
           const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
           // Abort the stream with a short error marker. We can't pass the
@@ -706,7 +835,8 @@ export async function start(): Promise<void> {
               threadTs: streamThreadTs,
               messageTs: msg.ts,
               sessionId: session.id,
-              claudeSessionId: claudeSessionId ?? null,
+              agentSessionId: agentSessionId ?? null,
+              backend: runtime.backend,
               nativeStreamer,
               fullText: accumulated,
             });
@@ -737,8 +867,15 @@ export async function start(): Promise<void> {
               },
               'Persisting interrupted native streaming response',
             );
-            if (claudeSessionId && claudeSessionId !== session.claudeSessionId) {
-              await repo.updateClaudeSessionId(session.id, claudeSessionId);
+            if (agentSessionId) {
+              await persistAgentSession(repo, slackClient!, {
+                sessionId: session.id,
+                backend: runtime.backend,
+                agentSessionId,
+                expectedRevision: expectedSessionRevision,
+                channel: channelId,
+                threadTs: streamThreadTs,
+              });
             }
             await repo.saveMessage({
               sessionId: session.id,
@@ -752,18 +889,27 @@ export async function start(): Promise<void> {
               slackThread: sessionKey,
               userMessage,
               assistantResponse: result,
-              claudeSessionId: claudeSessionId ?? null,
+              agentSessionId: agentSessionId ?? null,
+              backend: runtime.backend,
+              model: runtime.model,
               durationMs,
               costUsd,
+              usage,
             });
           }
 
           return;
         }
 
-        // Update session with Claude session ID
-        if (claudeSessionId && claudeSessionId !== session.claudeSessionId) {
-          await repo.updateClaudeSessionId(session.id, claudeSessionId);
+        if (agentSessionId) {
+          await persistAgentSession(repo, slackClient!, {
+            sessionId: session.id,
+            backend: runtime.backend,
+            agentSessionId,
+            expectedRevision: expectedSessionRevision,
+            channel: channelId,
+            threadTs: streamThreadTs,
+          });
         }
 
         // Save outbound message — native streaming doesn't give us a ts
@@ -783,16 +929,20 @@ export async function start(): Promise<void> {
           slackThread: sessionKey,
           userMessage,
           assistantResponse: result,
-          claudeSessionId: claudeSessionId ?? null,
+          agentSessionId: agentSessionId ?? null,
+          backend: runtime.backend,
+          model: runtime.model,
           durationMs,
           costUsd,
+          usage,
         });
 
         const deliveryStatus = nativeStreamer.getDeliveryStatus();
         logger.info(
           {
             sessionId: session.id,
-            claudeSessionId,
+            agentSessionId,
+            backend: runtime.backend,
             durationMs,
             deliverySuspected: deliveryStatus.suspected,
             deliveryReasons: deliveryStatus.issues.map((issue) => issue.reason),
@@ -809,16 +959,22 @@ export async function start(): Promise<void> {
         // the first message when real content (text or tool status) arrives.
 
         let result = '';
-        let claudeSessionId: string | undefined;
+        let agentSessionId: string | undefined;
         let durationMs: number | undefined;
         let costUsd: number | undefined;
+        let usage: AgentUsage | undefined;
 
         try {
-          const stream = claudeRunner.runStream({
+          const stream = runner.runStream({
             prompt: userMessage,
             resumeSessionId: resumeSessionId ?? undefined,
-            effort: effortForChannel(channelId),
-            model: modelForChannel(channelId),
+            effort: runtime.effort,
+            model: runtime.model,
+            // This branch delivers via SlackStreamUpdater(replyThreadTs).
+            slackChannelId: channelId,
+            slackThreadTs: replyThreadTs,
+            signal: runController.signal,
+            imagePaths: runtime.backend === 'codex' ? imagePaths : undefined,
           });
 
           for await (const event of stream) {
@@ -834,17 +990,15 @@ export async function start(): Promise<void> {
                 await updater.tickNow();
                 break;
               case 'tool_end':
-                // Intentionally no-op: the tool_end event fires when Claude
-                // finishes generating the tool-call JSON, NOT when the tool
-                // finishes executing. We want the label visible during the
-                // actual execution gap. It'll be cleared when text_delta
-                // arrives or a new tool_start overrides it.
+                // Intentionally no-op: the next text phase or tool result
+                // clears/replaces the legacy status display.
                 break;
               case 'result':
                 result = event.result;
-                claudeSessionId = event.sessionId;
+                agentSessionId = event.sessionId;
                 durationMs = event.durationMs;
                 costUsd = event.costUsd;
+                usage = event.usage;
                 break;
             }
           }
@@ -857,15 +1011,21 @@ export async function start(): Promise<void> {
           const formattedResult = formatForSlack(result);
           await updater.finish(formattedResult);
         } catch (error) {
-          logger.error({ error }, 'Streaming Claude invocation failed');
+          logger.error({ error, backend: runtime.backend }, 'Streaming agent invocation failed');
           const errorMessage = error instanceof Error ? error.message : 'Unknown error';
           await updater.abort(`❌ Error: ${errorMessage}`);
           return;
         }
 
-        // Update session with Claude session ID
-        if (claudeSessionId && claudeSessionId !== session.claudeSessionId) {
-          await repo.updateClaudeSessionId(session.id, claudeSessionId);
+        if (agentSessionId) {
+          await persistAgentSession(repo, slackClient!, {
+            sessionId: session.id,
+            backend: runtime.backend,
+            agentSessionId,
+            expectedRevision: expectedSessionRevision,
+            channel: channelId,
+            threadTs: replyThreadTs,
+          });
         }
 
         const responseTs = updater.getMessageTimestamps()[0] ?? '';
@@ -885,13 +1045,16 @@ export async function start(): Promise<void> {
           slackThread: sessionKey,
           userMessage,
           assistantResponse: result,
-          claudeSessionId: claudeSessionId ?? null,
+          agentSessionId: agentSessionId ?? null,
+          backend: runtime.backend,
+          model: runtime.model,
           durationMs,
           costUsd,
+          usage,
         });
 
         logger.info(
-          { sessionId: session.id, claudeSessionId, durationMs },
+          { sessionId: session.id, agentSessionId, backend: runtime.backend, durationMs },
           'Streaming response completed',
         );
       } else {
@@ -908,33 +1071,34 @@ export async function start(): Promise<void> {
           thinkingTs = thinkingResult.ok ? thinkingResult.value : null;
         }
 
-        const claudeResult = await claudeRunner.run({
+        const agentResult = await runner.run({
           prompt: userMessage,
           resumeSessionId: resumeSessionId ?? undefined,
-          effort: effortForChannel(channelId),
-          model: modelForChannel(channelId),
+          effort: runtime.effort,
+          model: runtime.model,
+          // This branch delivers via say({ thread_ts: replyThreadTs }).
+          slackChannelId: channelId,
+          slackThreadTs: replyThreadTs,
+          signal: runController.signal,
+          imagePaths: runtime.backend === 'codex' ? imagePaths : undefined,
         });
 
-        if (!claudeResult.ok) {
-          logger.error({ error: claudeResult.error }, 'Claude invocation failed');
+        if (!agentResult.ok) {
+          logger.error({ error: agentResult.error, backend: runtime.backend }, 'Agent invocation failed');
           if (thinkingTs) {
             await slackClient!.updateMessage({
               channel: channelId,
               ts: thinkingTs,
-              text: `❌ Error: ${claudeResult.error.message}`,
+              text: `❌ Error: ${agentResult.error.message}`,
             });
           } else {
-            await say({ text: `❌ Error: ${claudeResult.error.message}`, thread_ts: replyThreadTs });
+            await say({ text: `❌ Error: ${agentResult.error.message}`, thread_ts: replyThreadTs });
           }
           return;
         }
 
-        const { result, sessionId: claudeSessionId, durationMs, costUsd } = claudeResult.value;
+        const { result, sessionId: agentSessionId, durationMs, costUsd, usage } = agentResult.value;
         const formattedResult = formatForSlack(result);
-
-        if (claudeSessionId && claudeSessionId !== session.claudeSessionId) {
-          await repo.updateClaudeSessionId(session.id, claudeSessionId);
-        }
 
         if (thinkingTs) {
           await slackClient!.deleteMessage({ channel: channelId, ts: thinkingTs }).catch(() => {});
@@ -962,6 +1126,17 @@ export async function start(): Promise<void> {
           logger.info({ chunks: chunks.length }, 'Response split into multiple messages');
         }
 
+        if (agentSessionId) {
+          await persistAgentSession(repo, slackClient!, {
+            sessionId: session.id,
+            backend: runtime.backend,
+            agentSessionId,
+            expectedRevision: expectedSessionRevision,
+            channel: channelId,
+            threadTs: replyThreadTs,
+          });
+        }
+
         await repo.saveMessage({
           sessionId: session.id,
           slackTs: responseTs,
@@ -975,19 +1150,27 @@ export async function start(): Promise<void> {
           slackThread: sessionKey,
           userMessage,
           assistantResponse: result,
-          claudeSessionId: claudeSessionId ?? null,
+          agentSessionId: agentSessionId ?? null,
+          backend: runtime.backend,
+          model: runtime.model,
           durationMs,
           costUsd,
+          usage,
         });
 
         logger.info(
-          { sessionId: session.id, claudeSessionId, durationMs },
+          { sessionId: session.id, agentSessionId, backend: runtime.backend, durationMs },
           'Response sent successfully',
         );
       }
     } catch (error) {
       logger.error({ error }, 'Unhandled error in message handler');
       await say({ text: '❌ An unexpected error occurred.', thread_ts: replyThreadTs });
+    } finally {
+      if (runController) activeRunControllers.delete(runController);
+      if (leasedSessionId) {
+        await repo.releaseRunLease(leasedSessionId, leaseOwner);
+      }
     }
     }).catch((error) => {
       // Safety net — should never fire since inner try/catch handles everything
@@ -1038,8 +1221,15 @@ function setupShutdownHandlers(): void {
     logger.info({ signal }, 'Shutdown initiated');
 
     try {
+      for (const controller of activeRunControllers) controller.abort();
       if (slackClient) {
         await slackClient.stop();
+      }
+      if (sessionLocks.size > 0) {
+        await Promise.race([
+          Promise.allSettled([...sessionLocks.values()]),
+          new Promise((resolve) => setTimeout(resolve, 10_000)),
+        ]);
       }
       await closeDb();
       console.log(chalk.green('✓ Shutdown complete'));

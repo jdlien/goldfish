@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, readFileSync, rmSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { buildClaudeMd, buildFocusMd } from '../../src/cli/init.js';
+import { buildClaudeMd, buildFocusMd, codexifyClaudeInstructions } from '../../src/cli/init.js';
 
 const TEST_DIR = join(__dirname, '..', '__fixtures__', 'init-workspace');
 
@@ -48,6 +48,20 @@ describe('buildFocusMd', () => {
     expect(result).toContain('# Current Focus');
     expect(result).toContain('## This Week');
     expect(result).toContain('## Watch Items');
+  });
+});
+
+describe('codexifyClaudeInstructions', () => {
+  it('turns Claude @imports into explicit Codex read instructions', () => {
+    const result = codexifyClaudeInstructions([
+      '@SOUL.md',
+      '1. @IDENTITY.md — who you are',
+      '- @memory/MOMENTS.md — emotional memory',
+    ].join('\n'));
+    expect(result).toContain('Read `SOUL.md`');
+    expect(result).toContain('1. Read `IDENTITY.md` — who you are');
+    expect(result).toContain('- Read `memory/MOMENTS.md` — emotional memory');
+    expect(result).not.toMatch(/(^|\s)@(?:SOUL|IDENTITY|memory\/MOMENTS)/);
   });
 });
 

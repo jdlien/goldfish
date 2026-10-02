@@ -1,14 +1,14 @@
 # Goldfish — Architecture
 
-_A Claude Code-native agent runtime. Two launchd agents. One config file._
+_A Claude Code or Codex agent runtime. Two launchd agents. One config file._
 
 ---
 
 ## The Fundamental Insight
 
-OpenClaw is an orchestration layer that routes messages to models like Claude. But Claude Code already _is_ an orchestration layer — it has tools, hooks, session persistence, project context, and `--resume`. We don't need to build an agent runtime from scratch. We need a **thin Slack adapter** that gets messages to Claude Code and a **memory pipeline** that captures what happens.
+Claude Code and Codex already provide tools, session persistence, project context, and resumable conversations. Goldfish is a **thin Slack adapter** that routes a message to the selected runtime and a **memory pipeline** that captures what happens.
 
-**The infrastructure is minimal: two launchd agents and one config file.** The depth is in what sits on top — session continuity across threads, a four-layer memory pipeline with full-text search, proactive outreach, browser automation, and a CLI for everything else. Claude Code does the orchestration; Goldfish gives it a home.
+**The infrastructure is minimal: two launchd agents and one config file.** A runtime resolver chooses `claude` or `codex` globally, by channel, or by scheduled task. The selected provider does the orchestration; Goldfish gives it a home.
 
 ---
 
@@ -26,23 +26,21 @@ OpenClaw is an orchestration layer that routes messages to models like Claude. B
 │  (Node.js, long-running, ~640 lines)            │
 │                                                 │
 │  • Receives Slack messages                      │
-│  • Maps threads → Claude sessions (SQLite)      │
-│  • Spawns: claude -p "msg" --resume <id>        │
+│  • Maps threads → provider sessions (SQLite)    │
+│  • Routes to ClaudeRunner or CodexRunner        │
 │  • Posts response back to thread                │
 │  • Saves transcript to memory/sessions/         │
 └──────────────┬──────────────────────────────────┘
                │ spawns per message
                ▼
 ┌─────────────────────────────────────────────────┐
-│           CLAUDE CODE (CLI)                     │
-│  (Max subscription, $0 marginal cost)           │
+│       CLAUDE CODE OR OPENAI CODEX               │
+│  (authenticated local CLI session)              │
 │                                                 │
-│  • Reads CLAUDE.md → agent identity/config      │
-│  • Full tool access (bash, edit, read, web)     │
+│  • Reads CLAUDE.md or AGENTS.md                 │
+│  • Tools run under provider execution policy    │
 │  • Memory search via sqlite3                    │
-│  • Session persistence via --resume             │
-│  • Hooks fire on session events                 │
-│  • --dangerously-skip-permissions for headless  │
+│  • Native provider session persistence          │
 └──────────────┬──────────────────────────────────┘
                │ writes during + after session
                ▼
@@ -64,7 +62,7 @@ OpenClaw is an orchestration layer that routes messages to models like Claude. B
 │ Reads <workspace>/schedule.yaml, fires matching │
 │ tasks                                           │
 │                                                 │
-│  Initiate tasks → Claude → Slack:               │
+│  Initiate tasks → selected runtime → Slack:     │
 │  • Morning briefing (8:30 AM)                   │
 │  • Hourly heartbeat — silent unless urgent      │
 │  • Optional: evening exploration session        │
@@ -81,23 +79,25 @@ OpenClaw is an orchestration layer that routes messages to models like Claude. B
 
 ### What It Does
 
-Listens for Slack messages via Socket Mode. When a message arrives, spawns a `claude` CLI process with the message as prompt. Posts the response back. Maps Slack threads to Claude sessions for continuity.
+Listens for Slack messages via Socket Mode. For each message it resolves a backend, provider-specific model, and effort; invokes that runner; and posts the normalized result. Slack threads map to provider sessions for continuity.
 
 ### Key Files
 
 - **`SlackBoltClient.ts`** — Slack SDK wrapper (Socket Mode, send/update/delete messages, file upload)
-- **`ClaudeRunner.ts`** — spawns `claude -p` with JSON output, handles `--resume`, timeouts
-- **`SqliteRepo.ts`** — maps Slack threads → Claude session IDs
+- **`AgentRunner.ts`** — provider-neutral run/result contract
+- **`ClaudeRunner.ts`** — Claude CLI transport
+- **`CodexRunner.ts`** — Codex TypeScript SDK transport
+- **`SqliteRepo.ts`** — maps Slack threads → active backend/session pairs
 - **`start.ts`** — message handler, thinking indicator, session lookup, error handling
 - **`slackFormatter.ts`** — markdown → Slack mrkdwn conversion
 
 ### How Threads = Parallel Conversations
 
-Each Slack thread maps to an independent Claude Code session:
+Each Slack thread maps to one active provider session. Same-provider model changes can resume it; changing providers clears it and starts fresh:
 
 ```
-Slack DM (new message)     → new Claude session (fresh context)
-Slack DM (thread reply)    → claude --resume <session_id> (continues)
+Slack DM (new message)     → new provider session (fresh context)
+Slack DM (thread reply)    → resume active provider session
 Channel (new msg)          → new session, auto-threaded
 Channel (thread reply)     → claude --resume <session_id>
 ```
@@ -105,14 +105,14 @@ Channel (thread reply)     → claude --resume <session_id>
 The `SqliteRepo` stores the mapping:
 
 ```
-slack_thread_ts  →  claude_session_id
-1234567890.001   →  a1b2c3d4-...
-1234567890.002   →  e5f6g7h8-...
+slack_thread_ts  →  agent_backend + agent_session_id
+1234567890.001   →  claude + a1b2c3d4-...
+1234567890.002   →  codex  + 0199abcd-...
 ```
 
 ### Working Directory and Identity Bootstrap
 
-Claude Code spawns in **the agent workspace directory**, not the goldfish repo. This means `CLAUDE.md` at workspace root bootstraps the agent's identity. Configurable via the `GOLDFISH_WORKSPACE` environment variable (defaults to `~/goldfish-workspace`).
+The runtime starts in **the agent workspace directory**, not the Goldfish repo. Claude reads `CLAUDE.md`; Codex reads `AGENTS.md`. `GOLDFISH_WORKSPACE` selects the workspace.
 
 ---
 
@@ -120,7 +120,7 @@ Claude Code spawns in **the agent workspace directory**, not the goldfish repo. 
 
 ### Layer 1: In-Session Memory (Agent writes it)
 
-If the agent's `CLAUDE.md` instructs it to update memory files during meaningful conversations, this becomes the richest memory source. No automation needed — the agent does this naturally when the conversation warrants it.
+If the provider identity file instructs the agent to update memory during meaningful conversations, this becomes the richest memory source.
 
 Common memory locations:
 
@@ -134,16 +134,16 @@ Common memory locations:
 
 Every message exchange gets appended to `memory/sessions/YYYY-MM-DD.jsonl`. This is mechanical, not creative — just a log of what was said. The bot does this automatically.
 
-### Layer 3: Daily Synthesis (Cron, Sonnet)
+### Layer 3: Daily Synthesis
 
 At 1 AM, `scripts/daily-synthesis.sh`:
 
 1. Reads yesterday's session JSONL
 2. Reads any memory files the agent wrote during the day
-3. Spawns `claude` with Sonnet to produce a consolidated daily narrative
+3. Invokes the configured synthesis backend through the provider-neutral runner
 4. Writes to `memory/YYYY-MM-DD.md` (additive — doesn't overwrite what the agent already wrote)
 
-**Model choice:** Sonnet is the default — it's the quality floor for accurate memory consolidation. But if you're on a Max subscription, use Opus. Synthesis runs at 1 AM when your quota is idle, and the difference in quality is real — especially for emotionally nuanced or multi-topic days. Set `model: claude-opus-4-7` on the `daily-synthesis` task in `schedule.yaml`.
+Synthesis inherits `GOLDFISH_BACKEND` unless the schedule task supplies `backend`. Claude synthesis defaults to `claude-sonnet-4-6` so changing the interactive Claude model does not silently change maintenance cost; Codex synthesis inherits `GOLDFISH_CODEX_MODEL`. A task-level `model` or `effort` overrides either provider. Synthesis runs isolated, read-only, without workspace identity discovery, command network, or web search.
 
 ### Layer 4: FTS5 Search Index
 
@@ -171,7 +171,7 @@ All scheduled tasks are defined in `schedule.yaml` inside the user workspace and
 
 The scheduler loads the config, checks which tasks are due, and fires them. Lock files prevent overlapping runs of the same task. There are two categories:
 
-**Initiate tasks** spawn Claude and post results to Slack:
+**Initiate tasks** invoke the selected runtime and post results to Slack:
 
 | Type          | Default Schedule   | Purpose                                                |
 | ------------- | ------------------ | ------------------------------------------------------ |

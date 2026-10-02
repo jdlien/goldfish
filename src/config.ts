@@ -5,9 +5,28 @@
  * with sensible defaults for macOS.
  */
 
-import { join } from 'path';
-import { existsSync } from 'fs';
+import { delimiter, join } from 'path';
+import { existsSync, readFileSync } from 'fs';
 import { homedir } from 'os';
+import type { AgentBackend, AgentWebSearchMode } from './adapters/AgentRunner.js';
+
+function recordEnv(name: string): Record<string, string> {
+  const raw = process.env[name];
+  if (!raw) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function backendEnv(raw: string | undefined, fallback: AgentBackend): AgentBackend {
+  return raw === 'codex' || raw === 'claude' ? raw : fallback;
+}
 
 /** The agent workspace — where identity files, memory, and tools live */
 export const WORKSPACE_PATH =
@@ -178,6 +197,40 @@ export const DEFAULT_MAX_TURNS = Number(process.env.GOLDFISH_MAX_TURNS ?? 50);
 /** Default timeout for Claude Code invocations (ms) */
 export const DEFAULT_TIMEOUT_MS = Number(process.env.GOLDFISH_TIMEOUT_MS ?? 900_000);
 
+/** Runtime provider. Claude remains the upgrade-safe default. */
+export const DEFAULT_BACKEND: AgentBackend = backendEnv(
+  process.env.GOLDFISH_BACKEND,
+  'claude',
+);
+export const BACKEND_BY_CHANNEL = recordEnv('GOLDFISH_BACKEND_BY_CHANNEL');
+
+/** Executable and unattended execution policy for Codex. */
+// Leave this undefined to let @openai/codex-sdk use its pinned bundled CLI.
+// Set it only when deliberately testing or deploying a different executable.
+export const CODEX_PATH = process.env.GOLDFISH_CODEX_PATH || undefined;
+export const CLAUDE_PATH = process.env.GOLDFISH_CLAUDE_PATH ?? 'claude';
+export const CODEX_SANDBOX = (() => {
+  const value = process.env.GOLDFISH_CODEX_SANDBOX;
+  return value === 'read-only' || value === 'danger-full-access' || value === 'workspace-write'
+    ? value
+    : 'workspace-write';
+})();
+// Goldfish agents invoke network-backed workspace tools (including Slack), so
+// command network is enabled by default. Web search remains a separate control.
+export const CODEX_NETWORK = process.env.GOLDFISH_CODEX_NETWORK !== 'false';
+export const CODEX_WEB_SEARCH: AgentWebSearchMode = (() => {
+  const value = process.env.GOLDFISH_CODEX_WEB_SEARCH;
+  return value === 'disabled' || value === 'live' || value === 'cached'
+    ? value
+    : 'cached';
+})();
+export const CODEX_ADDITIONAL_DIRECTORIES = (
+  process.env.GOLDFISH_CODEX_ADDITIONAL_DIRECTORIES ?? ''
+)
+  .split(delimiter)
+  .map((value) => value.trim())
+  .filter(Boolean);
+
 /** Session expiry — start fresh if thread is older than this (ms) */
 export const SESSION_EXPIRY_MS = Number(
   process.env.GOLDFISH_SESSION_EXPIRY_MS ?? 48 * 60 * 60 * 1000 // 48 hours
@@ -225,7 +278,11 @@ export const STREAM_BUFFER_SIZE = Number(
 );
 
 /** Effort levels the Claude CLI accepts (anything else is ignored by the CLI). */
-export const VALID_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
+export const ALL_EFFORT_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+export const CLAUDE_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
+export const CODEX_EFFORT_LEVELS = ALL_EFFORT_LEVELS;
+/** @deprecated Use the provider-specific effort list where possible. */
+export const VALID_EFFORT_LEVELS = ALL_EFFORT_LEVELS;
 
 /**
  * Default thinking effort applied to every session unless a channel overrides it.
@@ -239,16 +296,7 @@ export const DEFAULT_EFFORT = process.env.GOLDFISH_EFFORT;
  * `GOLDFISH_EFFORT_BY_CHANNEL='{"C0A7VB1U6EA":"low"}'`.
  * Lets chatty channels run fast (low) while work channels stay sharp (high/max).
  */
-export const EFFORT_BY_CHANNEL: Record<string, string> = (() => {
-  const raw = process.env.GOLDFISH_EFFORT_BY_CHANNEL;
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw) as Record<string, string>;
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    return {};
-  }
-})();
+export const EFFORT_BY_CHANNEL = recordEnv('GOLDFISH_EFFORT_BY_CHANNEL');
 
 /**
  * Per-channel briefing text. JSON map of Slack channel ID -> a short note
@@ -289,6 +337,9 @@ export function briefForChannel(channelId: string | undefined): string | undefin
  * `sonnet`, `haiku`, `fable`, or a full model ID).
  */
 export const DEFAULT_MODEL = process.env.GOLDFISH_MODEL;
+export const DEFAULT_CLAUDE_MODEL =
+  process.env.GOLDFISH_CLAUDE_MODEL ?? DEFAULT_MODEL;
+export const DEFAULT_CODEX_MODEL = process.env.GOLDFISH_CODEX_MODEL;
 
 /**
  * Per-channel model overrides. JSON map of Slack channel ID → model, e.g.
@@ -297,16 +348,12 @@ export const DEFAULT_MODEL = process.env.GOLDFISH_MODEL;
  * No validation list here — model names churn too fast; an invalid value
  * surfaces as a CLI error rather than being silently dropped.
  */
-export const MODEL_BY_CHANNEL: Record<string, string> = (() => {
-  const raw = process.env.GOLDFISH_MODEL_BY_CHANNEL;
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw) as Record<string, string>;
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    return {};
-  }
-})();
+export const MODEL_BY_CHANNEL = recordEnv('GOLDFISH_MODEL_BY_CHANNEL');
+export const CLAUDE_MODEL_BY_CHANNEL = {
+  ...MODEL_BY_CHANNEL,
+  ...recordEnv('GOLDFISH_CLAUDE_MODEL_BY_CHANNEL'),
+};
+export const CODEX_MODEL_BY_CHANNEL = recordEnv('GOLDFISH_CODEX_MODEL_BY_CHANNEL');
 
 /**
  * Resolve the model for a given channel. Channel override wins over the
@@ -314,7 +361,124 @@ export const MODEL_BY_CHANNEL: Record<string, string> = (() => {
  * configured.
  */
 export function modelForChannel(channelId: string | undefined): string | undefined {
-  return (channelId ? MODEL_BY_CHANNEL[channelId] : undefined) ?? DEFAULT_MODEL;
+  return modelForBackendChannel('claude', channelId);
+}
+
+export function backendForChannel(channelId: string | undefined): AgentBackend {
+  return backendEnv(channelId ? BACKEND_BY_CHANNEL[channelId] : undefined, DEFAULT_BACKEND);
+}
+
+export function modelForBackendChannel(
+  backend: AgentBackend,
+  channelId: string | undefined,
+): string | undefined {
+  if (backend === 'codex') {
+    return (channelId ? CODEX_MODEL_BY_CHANNEL[channelId] : undefined) ?? DEFAULT_CODEX_MODEL;
+  }
+  return (channelId ? CLAUDE_MODEL_BY_CHANNEL[channelId] : undefined) ?? DEFAULT_CLAUDE_MODEL;
+}
+
+export interface ResolvedRuntime {
+  backend: AgentBackend;
+  model?: string;
+  effort?: string;
+}
+
+export function runtimeForChannel(
+  channelId: string | undefined,
+  overrides: Partial<ResolvedRuntime> = {},
+): ResolvedRuntime {
+  const backend = overrides.backend ?? backendForChannel(channelId);
+  return {
+    backend,
+    model: overrides.model ?? modelForBackendChannel(backend, channelId),
+    effort: overrides.effort ?? effortForBackendChannel(backend, channelId),
+  };
+}
+
+/**
+ * Resolve an interactive thread's runtime. A scheduled task with an explicit
+ * backend override pins its newly-created Slack thread to that backend so the
+ * user's replies can resume the session it advertised. Ordinary threads keep
+ * following channel/global configuration changes.
+ */
+export function runtimeForConversation(
+  channelId: string | undefined,
+  session: { agentBackend: AgentBackend | null; agentBackendPinned: boolean },
+): ResolvedRuntime {
+  return runtimeForChannel(
+    channelId,
+    session.agentBackendPinned && session.agentBackend
+      ? { backend: session.agentBackend }
+      : {},
+  );
+}
+
+/** Deterministic startup validation for routing and execution-policy settings. */
+export function validateConfiguration(): string[] {
+  const errors: string[] = [];
+  const backend = process.env.GOLDFISH_BACKEND;
+  if (backend && backend !== 'claude' && backend !== 'codex') {
+    errors.push(`GOLDFISH_BACKEND must be "claude" or "codex" (received "${backend}").`);
+  }
+  const sandbox = process.env.GOLDFISH_CODEX_SANDBOX;
+  if (sandbox && !['read-only', 'workspace-write', 'danger-full-access'].includes(sandbox)) {
+    errors.push(`GOLDFISH_CODEX_SANDBOX has invalid value "${sandbox}".`);
+  }
+  const webSearch = process.env.GOLDFISH_CODEX_WEB_SEARCH;
+  if (webSearch && !['disabled', 'cached', 'live'].includes(webSearch)) {
+    errors.push(`GOLDFISH_CODEX_WEB_SEARCH has invalid value "${webSearch}".`);
+  }
+
+  const recordNames = [
+    'GOLDFISH_BACKEND_BY_CHANNEL',
+    'GOLDFISH_EFFORT_BY_CHANNEL',
+    'GOLDFISH_MODEL_BY_CHANNEL',
+    'GOLDFISH_CLAUDE_MODEL_BY_CHANNEL',
+    'GOLDFISH_CODEX_MODEL_BY_CHANNEL',
+  ];
+  for (const name of recordNames) {
+    const raw = process.env[name];
+    if (!raw) continue;
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        errors.push(`${name} must be a JSON object.`);
+      }
+    } catch {
+      errors.push(`${name} contains invalid JSON.`);
+    }
+  }
+
+  for (const [channel, value] of Object.entries(BACKEND_BY_CHANNEL)) {
+    if (value !== 'claude' && value !== 'codex') {
+      errors.push(`GOLDFISH_BACKEND_BY_CHANNEL[${channel}] must be "claude" or "codex".`);
+    }
+  }
+  if (DEFAULT_EFFORT) {
+    const valid = DEFAULT_BACKEND === 'claude' ? CLAUDE_EFFORT_LEVELS : CODEX_EFFORT_LEVELS;
+    if (!valid.includes(DEFAULT_EFFORT)) {
+      errors.push(`GOLDFISH_EFFORT "${DEFAULT_EFFORT}" is not valid for ${DEFAULT_BACKEND}.`);
+    }
+  }
+  for (const [channel, backendValue] of Object.entries(BACKEND_BY_CHANNEL)) {
+    if (!DEFAULT_EFFORT || EFFORT_BY_CHANNEL[channel]) continue;
+    if (backendValue !== 'claude' && backendValue !== 'codex') continue;
+    const valid = backendValue === 'claude' ? CLAUDE_EFFORT_LEVELS : CODEX_EFFORT_LEVELS;
+    if (!valid.includes(DEFAULT_EFFORT)) {
+      errors.push(
+        `GOLDFISH_EFFORT "${DEFAULT_EFFORT}" is not valid for ${backendValue} channel ${channel}.`,
+      );
+    }
+  }
+  for (const [channel, effort] of Object.entries(EFFORT_BY_CHANNEL)) {
+    const channelBackend = backendForChannel(channel);
+    const valid = channelBackend === 'claude' ? CLAUDE_EFFORT_LEVELS : CODEX_EFFORT_LEVELS;
+    if (!valid.includes(effort)) {
+      errors.push(`GOLDFISH_EFFORT_BY_CHANNEL[${channel}] "${effort}" is not valid for ${channelBackend}.`);
+    }
+  }
+  return errors;
 }
 
 /**
@@ -326,9 +490,18 @@ export function modelForChannel(channelId: string | undefined): string | undefin
 export function effortForChannel(channelId: string | undefined): string | undefined {
   const candidate =
     (channelId ? EFFORT_BY_CHANNEL[channelId] : undefined) ?? DEFAULT_EFFORT;
-  return candidate && VALID_EFFORT_LEVELS.includes(candidate)
+  return candidate && ALL_EFFORT_LEVELS.includes(candidate)
     ? candidate
     : undefined;
+}
+
+export function effortForBackendChannel(
+  backend: AgentBackend,
+  channelId: string | undefined,
+): string | undefined {
+  const effort = effortForChannel(channelId);
+  const valid = backend === 'claude' ? CLAUDE_EFFORT_LEVELS : CODEX_EFFORT_LEVELS;
+  return effort && valid.includes(effort) ? effort : undefined;
 }
 
 /**
@@ -336,7 +509,7 @@ export function effortForChannel(channelId: string | undefined): string | undefi
  * Call this at the start of commands that need the workspace (start, initiate).
  * Returns null if valid, or an error message string.
  */
-export function validateWorkspace(): string | null {
+export function validateWorkspace(backend: AgentBackend = DEFAULT_BACKEND): string | null {
   if (!existsSync(WORKSPACE_PATH)) {
     return [
       `Workspace directory not found: ${WORKSPACE_PATH}`,
@@ -349,14 +522,36 @@ export function validateWorkspace(): string | null {
     ].join('\n');
   }
 
-  if (!existsSync(join(WORKSPACE_PATH, 'CLAUDE.md'))) {
+  const identityFile = backend === 'codex' ? 'AGENTS.md' : 'CLAUDE.md';
+  if (!existsSync(join(WORKSPACE_PATH, identityFile))) {
     return [
-      `Workspace exists but is missing CLAUDE.md: ${WORKSPACE_PATH}`,
+      `Workspace exists but is missing ${identityFile}: ${WORKSPACE_PATH}`,
       '',
-      'CLAUDE.md defines your agent\'s identity and is required.',
-      'Run: goldfish init    (to scaffold a workspace with a starter CLAUDE.md)',
+      `${identityFile} defines your ${backend} agent's identity and is required.`,
+      `Run: goldfish init    (to scaffold a workspace with a starter ${identityFile})`,
     ].join('\n');
   }
 
   return null;
+}
+
+/** Non-fatal identity mismatches that can make a provider boot incompletely. */
+export function workspaceWarnings(backend: AgentBackend = DEFAULT_BACKEND): string[] {
+  if (backend !== 'codex') return [];
+  const claudePath = join(WORKSPACE_PATH, 'CLAUDE.md');
+  const agentsPath = join(WORKSPACE_PATH, 'AGENTS.md');
+  if (!existsSync(claudePath) || !existsSync(agentsPath)) return [];
+
+  const claude = readFileSync(claudePath, 'utf8');
+  const agents = readFileSync(agentsPath, 'utf8');
+  const imports = new Set(
+    [...claude.matchAll(/@([A-Za-z0-9_./-]+\.md)\b/g)].map((match) => match[1]),
+  );
+  const missing = [...imports].filter((target) => !agents.includes(target));
+  return missing.length > 0
+    ? [
+        `AGENTS.md does not mention Claude identity imports: ${missing.join(', ')}. ` +
+          'Codex does not expand @file syntax; add explicit instructions to read these files.',
+      ]
+    : [];
 }

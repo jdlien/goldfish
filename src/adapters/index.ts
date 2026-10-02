@@ -3,6 +3,15 @@ export type { SlackConfig, SendMessageParams, SlackMessage } from './SlackBoltCl
 
 export { ClaudeRunner } from './ClaudeRunner.js';
 export type { ClaudeResponse, ClaudeRunParams } from './ClaudeRunner.js';
+export { CodexRunner } from './CodexRunner.js';
+export { AgentRunnerRegistry } from './AgentRunnerFactory.js';
+export type {
+  AgentBackend,
+  AgentResponse,
+  AgentRunParams,
+  AgentRunner,
+  AgentUsage,
+} from './AgentRunner.js';
 
 export { StreamEventParser } from './StreamEventParser.js';
 export type { StreamEvent } from './StreamEventParser.js';

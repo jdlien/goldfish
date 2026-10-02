@@ -10,12 +10,17 @@
 #
 # Environment variables:
 #   GOLDFISH_WORKSPACE         — workspace path (default: ~/goldfish-workspace)
-#   GOLDFISH_SYNTHESIS_MODEL   — Claude model to use (default: claude-sonnet-4-6)
+#   GOLDFISH_SYNTHESIS_BACKEND — claude or codex
+#   GOLDFISH_SYNTHESIS_MODEL   — provider model override
 
 set -euo pipefail
 
 WORKSPACE="${GOLDFISH_WORKSPACE:-$HOME/goldfish-workspace}"
-MODEL="${GOLDFISH_SYNTHESIS_MODEL:-claude-sonnet-4-6}"
+CLAUDE_MODEL="${GOLDFISH_SYNTHESIS_MODEL:-claude-sonnet-4-6}"
+CODEX_MODEL="${GOLDFISH_SYNTHESIS_MODEL:-${GOLDFISH_CODEX_MODEL:-}}"
+BACKEND="${GOLDFISH_SYNTHESIS_BACKEND:-${GOLDFISH_BACKEND:-claude}}"
+EFFORT="${GOLDFISH_SYNTHESIS_EFFORT:-${GOLDFISH_EFFORT:-}}"
+CLAUDE_BIN="${GOLDFISH_CLAUDE_BIN:-claude}"
 
 SESSION_ID="$1"
 CHANNEL_ID="$2"
@@ -102,15 +107,42 @@ ${TRANSCRIPT}
 PROMPT_EOF
 )
 
-cd /tmp
-SYNTHESIS=$(claude -p "$PROMPT" \
-  --model "$MODEL" \
-  --max-turns 3 \
-  --dangerously-skip-permissions \
-  --output-format text \
-  --system-prompt "You are a memory synthesis assistant. Output ONLY new markdown sections to append to a daily log. Do not use any tools." \
-  2>/dev/null) || true
-cd - > /dev/null
+SCRATCH=$(mktemp -d)
+trap 'rm -rf "$SCRATCH"' EXIT
+RAW_FILE="${SCRATCH}/raw.md"
+if [ -n "${GOLDFISH_AGENT_RUNNER_ENTRY:-}" ]; then
+  AGENT_ARGS=("$GOLDFISH_AGENT_RUNNER_ENTRY" agent-run --backend "$BACKEND" --cwd "$SCRATCH" --timeout-ms 300000 --max-turns 3)
+  if [ "$BACKEND" = "claude" ]; then
+    AGENT_ARGS+=(--model "$CLAUDE_MODEL")
+  elif [ -n "$CODEX_MODEL" ]; then
+    AGENT_ARGS+=(--model "$CODEX_MODEL")
+  fi
+  if [ -n "$EFFORT" ]; then AGENT_ARGS+=(--effort "$EFFORT"); fi
+  printf '%s' "$PROMPT" | "${GOLDFISH_AGENT_RUNNER_BIN:-${GOLDFISH_NODE_BIN:-node}}" "${AGENT_ARGS[@]}" > "$RAW_FILE" 2>/dev/null || true
+elif [ "$BACKEND" = "codex" ]; then
+  if [ -n "${GOLDFISH_CODEX_PATH:-}" ]; then
+    CODEX_COMMAND=("$GOLDFISH_CODEX_PATH")
+  else
+    CODEX_ENTRY=$("${GOLDFISH_NODE_BIN:-node}" --input-type=module -e 'import {createRequire} from "node:module"; const r=createRequire(import.meta.resolve("@openai/codex-sdk")); process.stdout.write(r.resolve("@openai/codex/bin/codex.js"));')
+    CODEX_COMMAND=("${GOLDFISH_NODE_BIN:-node}" "$CODEX_ENTRY")
+  fi
+  CODEX_ARGS=(exec --ephemeral --skip-git-repo-check --ignore-rules -s read-only -C "$SCRATCH" -o "$RAW_FILE" -c 'approval_policy="never"' -c 'web_search="disabled"')
+  if [ -n "$CODEX_MODEL" ]; then
+    CODEX_ARGS+=(-m "$CODEX_MODEL")
+  fi
+  if [ -n "$EFFORT" ]; then CODEX_ARGS+=(-c "model_reasoning_effort=\"$EFFORT\""); fi
+  printf '%s' "$PROMPT" | "${CODEX_COMMAND[@]}" "${CODEX_ARGS[@]}" - >/dev/null 2>&1 || true
+elif [ "$BACKEND" = "claude" ]; then
+  cd "$SCRATCH"
+  CLAUDE_ARGS=(-p "$PROMPT" --model "$CLAUDE_MODEL" --max-turns 3 --dangerously-skip-permissions --output-format text --tools '' --system-prompt "You are a memory synthesis assistant. Output ONLY new markdown sections to append to a daily log. Do not use any tools.")
+  if [ -n "$EFFORT" ]; then CLAUDE_ARGS+=(--effort "$EFFORT"); fi
+  "$CLAUDE_BIN" "${CLAUDE_ARGS[@]}" > "$RAW_FILE" 2>/dev/null || true
+  cd - > /dev/null
+else
+  echo "Unsupported synthesis backend: $BACKEND" >&2
+  exit 1
+fi
+SYNTHESIS=$(cat "$RAW_FILE" 2>/dev/null || true)
 
 if [ -z "$SYNTHESIS" ] || [ "$SYNTHESIS" = "ALREADY_COVERED" ]; then
   echo "Thread synthesis: nothing new to add for session ${SESSION_ID}"

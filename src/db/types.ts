@@ -9,9 +9,21 @@ export interface SessionTable {
   slack_channel_id: string;
   slack_thread_ts: string | null;
   claude_session_id: string | null;
+  agent_backend: 'claude' | 'codex' | null;
+  agent_session_id: string | null;
+  agent_session_active_at: number | null;
+  agent_session_revision: Generated<number>;
+  agent_backend_pinned: Generated<number>;
+  run_lease_owner: string | null;
+  run_lease_expires_at: number | null;
   created_at: number;
   last_active_at: number;
   last_synthesized_at: number | null;
+}
+
+export interface GoldfishMigrationTable {
+  name: string;
+  applied_at: number;
 }
 
 export interface MessageTable {
@@ -39,4 +51,5 @@ export interface Database {
   sessions: SessionTable;
   messages: MessageTable;
   reminders: ReminderTable;
+  goldfish_migrations: GoldfishMigrationTable;
 }

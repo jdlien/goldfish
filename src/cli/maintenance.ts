@@ -36,7 +36,7 @@ export async function runMaintenanceTask(task: ScheduleTask): Promise<void> {
 
 /**
  * Run daily synthesis via the shell script.
- * The script handles yesterday's date, JSONL reading, Claude invocation, and file writing.
+ * The script handles yesterday's date, JSONL reading, provider invocation, and file writing.
  */
 async function runDailySynthesis(task: ScheduleTask): Promise<void> {
   console.log(chalk.bold('\n📝 Running daily synthesis...\n'));
@@ -45,12 +45,18 @@ async function runDailySynthesis(task: ScheduleTask): Promise<void> {
   const env: Record<string, string> = {
     ...process.env as Record<string, string>,
     GOLDFISH_WORKSPACE: WORKSPACE_PATH,
+    GOLDFISH_AGENT_RUNNER_ENTRY: process.argv[1] ?? '',
+    GOLDFISH_AGENT_RUNNER_BIN: process.argv[1]?.endsWith('.ts')
+      ? join(process.cwd(), 'node_modules', '.bin', 'tsx')
+      : process.execPath,
   };
 
   // Pass model override via environment variable
   if (task.model) {
     env.GOLDFISH_SYNTHESIS_MODEL = task.model;
   }
+  if (task.backend) env.GOLDFISH_SYNTHESIS_BACKEND = task.backend;
+  if (task.effort) env.GOLDFISH_SYNTHESIS_EFFORT = task.effort;
 
   try {
     const output = execFileSync('bash', [scriptPath], {
@@ -98,11 +104,17 @@ async function runThreadSynthesis(task: ScheduleTask): Promise<void> {
   const env: Record<string, string> = {
     ...process.env as Record<string, string>,
     GOLDFISH_WORKSPACE: WORKSPACE_PATH,
+    GOLDFISH_AGENT_RUNNER_ENTRY: process.argv[1] ?? '',
+    GOLDFISH_AGENT_RUNNER_BIN: process.argv[1]?.endsWith('.ts')
+      ? join(process.cwd(), 'node_modules', '.bin', 'tsx')
+      : process.execPath,
   };
 
   if (task.model) {
     env.GOLDFISH_SYNTHESIS_MODEL = task.model;
   }
+  if (task.backend) env.GOLDFISH_SYNTHESIS_BACKEND = task.backend;
+  if (task.effort) env.GOLDFISH_SYNTHESIS_EFFORT = task.effort;
 
   for (const session of sessions) {
     const sessionDesc = session.slackThreadTs
@@ -125,10 +137,12 @@ async function runThreadSynthesis(task: ScheduleTask): Promise<void> {
         timeout: 5 * 60 * 1000, // 5 minute timeout per thread
       });
 
-      // Mark as synthesized
+      // Mark only through the activity watermark captured before synthesis.
+      // A message arriving while the model runs remains newer and will be
+      // selected on the next pass instead of being skipped accidentally.
       const markDb = await initDb();
       const markRepo = new SqliteRepo(markDb);
-      await markRepo.markSessionSynthesized(session.id);
+      await markRepo.markSessionSynthesized(session.id, session.lastActiveAt);
       await closeDb();
 
       console.log(chalk.green(`  ✓ ${sessionDesc}`));

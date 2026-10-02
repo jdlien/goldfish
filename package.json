@@ -1,7 +1,7 @@
 {
   "name": "goldfish",
   "version": "0.1.0",
-  "description": "AI agent runtime — a Claude Code-native Slack bot with persistent memory",
+  "description": "AI agent runtime — a Claude Code or Codex Slack bot with persistent memory",
   "type": "module",
   "packageManager": "pnpm@10.23.0",
   "bin": {
@@ -19,6 +19,7 @@
     "format": "prettier --write 'src/**/*.ts'"
   },
   "dependencies": {
+    "@openai/codex-sdk": "^0.155.1",
     "@slack/bolt": "^4.1.0",
     "better-sqlite3": "^12.11.1",
     "chalk": "^5.4.1",
