@@ -1,6 +1,6 @@
 {
   "name": "goldfish",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "AI agent runtime — a Claude Code or Codex Slack bot with persistent memory",
   "type": "module",
   "packageManager": "pnpm@10.23.0",
