@@ -7,6 +7,7 @@ import { SqliteRepo } from '../adapters/SqliteRepo.js';
 import { writeTranscript } from '../adapters/TranscriptWriter.js';
 import { initDb, closeDb } from '../db/index.js';
 import { createChildLogger } from '../lib/logger.js';
+import { resolveMessageText, type SlackBlock } from '../lib/richText.js';
 import { isHumanMessage } from '../lib/messageFilter.js';
 import { formatForSlack, splitSlackMessage } from '../lib/slackFormatter.js';
 import { SlackStreamUpdater } from '../lib/SlackStreamUpdater.js';
@@ -59,6 +60,7 @@ interface SlackDmMessage {
   subtype?: string;
   user?: string;
   files?: SlackFile[];
+  blocks?: SlackBlock[];
 }
 
 const logger = createChildLogger('cli:start');
@@ -295,7 +297,9 @@ export async function start(): Promise<void> {
     const replyThreadTs = isListenChannel
       ? (msg.thread_ts ?? msg.ts)
       : msg.thread_ts;
-    let userMessage = msg.text ?? '';
+    // Slack sometimes puts a placeholder in `text` and the real content only
+    // in the blocks. See richText.ts.
+    let userMessage = resolveMessageText(msg.text, msg.blocks);
 
     logger.info(
       {
